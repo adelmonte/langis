@@ -1794,3 +1794,17 @@ fn stickers_name_their_pack_and_syncs_install_packs() {
         "{actions:?}"
     );
 }
+
+#[test]
+fn incoming_group_messages_and_edits_name_their_group() {
+    let key: [u8; 32] = group_key().try_into().unwrap();
+    let mut dm = text("hi", 100);
+    dm.group_v2 = Some(GroupContextV2 { master_key: Some(group_key()), revision: Some(3), ..Default::default() });
+    assert_eq!(incoming_group_key(&content(ALICE, dm.clone())), Some(key));
+    let edit = EditMessage { target_sent_timestamp: Some(100), data_message: Some(dm.clone()) };
+    assert_eq!(incoming_group_key(&content(ALICE, edit)), Some(key));
+    // 1:1 messages, and keys of the wrong length, name none.
+    assert_eq!(incoming_group_key(&content(ALICE, text("hi", 100))), None);
+    dm.group_v2 = Some(GroupContextV2 { master_key: Some(vec![1, 2, 3]), ..Default::default() });
+    assert_eq!(incoming_group_key(&content(ALICE, dm)), None);
+}

@@ -449,8 +449,39 @@ fn uuid_of(aci: Aci) -> presage::libsignal_service::prelude::Uuid {
     aci.into()
 }
 
+/// Whether the group server signed `change`'s actions: its notary
+/// signature checked against the server's public params. A change that
+/// arrives inside a message must pass this before it's applied; anyone with
+/// the group's master key can build one that decrypts.
+pub(crate) fn group_change_signed(params: &zkgroup::ServerPublicParams, change: &presage::proto::GroupChange) -> bool {
+    let Ok(signature) = <[u8; 64]>::try_from(change.server_signature.as_slice()) else { return false };
+    params.verify_signature(&change.actions, signature).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn group_changes_need_the_servers_signature() {
+        let secret = zkgroup::ServerSecretParams::generate([1; 32]);
+        let params = secret.get_public_params();
+        let actions = b"encrypted actions".to_vec();
+        let signed = presage::proto::GroupChange {
+            server_signature: secret.sign([2; 32], &actions).to_vec(),
+            actions: actions.clone(),
+            ..Default::default()
+        };
+        assert!(super::group_change_signed(&params, &signed));
+
+        // Unsigned, signed by another key, or signed over other actions.
+        let unsigned = presage::proto::GroupChange { actions: actions.clone(), ..Default::default() };
+        assert!(!super::group_change_signed(&params, &unsigned));
+        let other = zkgroup::ServerSecretParams::generate([3; 32]);
+        let forged = presage::proto::GroupChange { server_signature: other.sign([2; 32], &actions).to_vec(), ..signed.clone() };
+        assert!(!super::group_change_signed(&params, &forged));
+        let altered = presage::proto::GroupChange { actions: b"other actions".to_vec(), ..signed };
+        assert!(!super::group_change_signed(&params, &altered));
+    }
     use super::*;
 
     #[test]

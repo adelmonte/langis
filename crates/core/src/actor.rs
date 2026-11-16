@@ -1476,6 +1476,19 @@ impl Actor {
                 if sender != self_aci && self.is_blocked(&ConversationId::direct(&sender)).await {
                     return;
                 }
+                // Nor a group message from someone who isn't a member: anyone
+                // with the master key (a removed member, anyone who saw an
+                // invite link) can send one (Desktop: "Received message from
+                // non-member"). presage has already fetched the group from the
+                // server when the message named a newer revision than its
+                // copy, so its member list is current.
+                if sender != self_aci
+                    && let Some(key) = mapping::incoming_group_key(&content)
+                    && !self.group_members(key).await.iter().any(|aci| aci.service_id_string() == sender)
+                {
+                    warn!(conversation = %ConversationId::group(&key), "dropping a group message from a non-member");
+                    return;
+                }
                 // A one-to-one story reply, like a story, only from someone
                 // we share our profile with (Desktop's `MessageReceiver`).
                 if let ContentBody::DataMessage(dm) = &content.body
@@ -2382,16 +2395,35 @@ impl Actor {
 
     /// A group change (ours or someone else's): notices for what changed,
     /// the new timer, and whether we're still in the group.
+    /// Whether the group server signed `change`'s actions (its notary
+    /// signature, checked against the server's public params).
+    fn group_change_signed(&self, change: &presage::proto::GroupChange) -> bool {
+        use presage::libsignal_service::configuration::ServiceConfiguration;
+        let Some(servers) = self.manager().map(|m| m.registration_data().signal_servers) else { return false };
+        crate::groups::group_change_signed(&ServiceConfiguration::from(servers).zkgroup_server_public_params, change)
+    }
+
     async fn apply_group_change(self: &Rc<Self>, key: [u8; 32], change: &[u8], at: i64) {
         use presage::libsignal_service::groups_v2::GroupOperations;
         use prost::Message as _;
         let operations = GroupOperations::new(GroupSecretParams::derive_from_master_key(GroupMasterKey::new(key)));
         let Ok(change) = presage::proto::GroupChange::decode(change) else { return };
+        let conversation = ConversationId::group(&key);
+        // The change rides in a message, but the group server made it and
+        // signed it. Anyone holding the master key (a removed member, anyone
+        // who saw an invite link) can build a change that decrypts, so only a
+        // signed one is applied, as Desktop verifies the notary signature.
+        // Otherwise read the group from the server, which says what really
+        // changed.
+        if !self.group_change_signed(&change) {
+            warn!(%conversation, "ignoring a group change without a valid server signature");
+            tokio::task::spawn_local(self.clone().refresh_group(conversation));
+            return;
+        }
         let changes = match operations.decrypt_group_change(change) {
             Ok(changes) => changes,
             Err(error) => return warn!(?error, "couldn't decrypt a group change"),
         };
-        let conversation = ConversationId::group(&key);
         let pni = self.manager().map(|m| m.registration_data().service_ids.pni().service_id_string());
         let summary = {
             let _lock = self.group_state_lock(&conversation).await;

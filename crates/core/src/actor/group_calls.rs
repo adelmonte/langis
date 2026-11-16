@@ -179,7 +179,7 @@ pub(super) fn http() -> Option<&'static reqwest::Client> {
 
 impl Actor {
     /// The group's members, from its stored copy.
-    async fn group_members(&self, key: [u8; 32]) -> Vec<Aci> {
+    pub(super) async fn group_members(&self, key: [u8; 32]) -> Vec<Aci> {
         self.store.group(key).await.ok().flatten().map(|g| g.members.iter().map(|m| m.aci).collect()).unwrap_or_default()
     }
 

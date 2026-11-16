@@ -657,6 +657,17 @@ fn data_message_of(content: &Content) -> Option<&DataMessage> {
     }
 }
 
+/// The group an incoming message or edit was sent in (its master key).
+/// Our own sync transcripts don't count: they're from us.
+pub fn incoming_group_key(content: &Content) -> Option<[u8; 32]> {
+    let data = match &content.body {
+        ContentBody::DataMessage(dm) => dm,
+        ContentBody::EditMessage(edit) => edit.data_message.as_ref()?,
+        _ => return None,
+    };
+    data.group_v2.as_ref()?.master_key.as_deref()?.try_into().ok()
+}
+
 /// A group change carried by an incoming message (or our own sync
 /// transcript): the group's master key, the signed change and when.
 pub fn group_change_of(content: &Content) -> Option<([u8; 32], Vec<u8>, i64)> {
