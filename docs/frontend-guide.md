@@ -36,6 +36,11 @@ One backend is one account. To run several accounts, start several backends
 with separate data directories and share one `CallLines` between their
 configs, so a call on one makes the others answer "busy".
 
+One backend per data directory: `Backend::start` takes `langis.lock` in it
+and fails with "already in use by another running copy" while another
+process (or another `Backend` in this one) has it. Show that, or bring the
+running window forward, rather than starting a second copy.
+
 ## 2. The database key
 
 Both databases (`signal.db` with the protocol keys, `app.db` with your

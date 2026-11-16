@@ -1472,6 +1472,25 @@ pub struct Backend {
     finished: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 }
 
+/// Takes `data_dir/langis.lock` for this process, or fails saying the
+/// directory is in use.
+fn lock_data_dir(data_dir: &std::path::Path) -> anyhow::Result<std::fs::File> {
+    let path = data_dir.join("langis.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("opening {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            anyhow::bail!("{} is already in use by another running copy", data_dir.display())
+        }
+        Err(std::fs::TryLockError::Error(error)) => Err(error).with_context(|| format!("locking {}", path.display())),
+    }
+}
+
 impl Backend {
     /// Where the databases, attachments and logs live.
     pub fn data_dir(&self) -> &std::path::Path {
@@ -1496,6 +1515,10 @@ impl Backend {
             std::fs::set_permissions(&config.data_dir, std::fs::Permissions::from_mode(0o700))
                 .with_context(|| format!("making {} private", config.data_dir.display()))?;
         }
+        // One backend per data directory: a second would connect as the same
+        // device and write the same databases. Held until the backend's
+        // thread ends (the system lets go of it if the process dies).
+        let lock = lock_data_dir(&config.data_dir)?;
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -1554,6 +1577,8 @@ impl Backend {
                 }
                 // Its tasks go with it.
                 drop(local);
+                // Free before `stop` returns, so the directory can be opened again.
+                drop(lock);
                 let (done, ended) = &*finished;
                 *done.lock().unwrap_or_else(|e| e.into_inner()) = true;
                 ended.notify_all();
