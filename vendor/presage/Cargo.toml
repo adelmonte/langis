@@ -11,6 +11,11 @@ default = []
 # brings libsignal-net and all its dependencies
 cdsi = ["libsignal-service/cdsi"]
 
+[lib]
+# Langis: the examples in its docs use presage-store-sqlite, a
+# dev-dependency the vendored copy doesn't have.
+doctest = false
+
 [dependencies]
 libsignal-service = { git = "https://github.com/whisperfish/libsignal-service-rs", rev = "7a7526741dfd9ad4c4894717f22651eb0506fb7e", default-features = false, features = [
     "phonenumber",

@@ -25,8 +25,9 @@ Linked libraries (AGPL-3.0-only):
 
 Modified libraries, vendored in vendor/ (AGPL-3.0-only):
   - presage                https://github.com/whisperfish/presage
+  - presage-store-sqlite   https://github.com/whisperfish/presage
   - libsignal-service-rs   https://github.com/whisperfish/libsignal-service-rs
-  Both are Copyright their upstream authors (the whisperfish contributors)
+  All are Copyright their upstream authors (the whisperfish contributors)
   and keep their licenses in vendor/*/LICENSE.md. They are modified
   versions, changed by Ken Powers for Vernam (then Signal GPUI) from
   2026-10-15 and by Langis contributors from 2026-11-16: vendor/README.md

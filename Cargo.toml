@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "vendor/libsignal-service"]
+members = ["crates/*", "vendor/libsignal-service", "vendor/presage-store-sqlite"]
 default-members = ["crates/core"]
 
 [workspace.package]
@@ -37,6 +37,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # vendor/README.md).
 [patch."https://github.com/whisperfish/presage"]
 presage = { path = "vendor/presage" }
+presage-store-sqlite = { path = "vendor/presage-store-sqlite" }
 [patch."https://github.com/whisperfish/libsignal-service-rs"]
 libsignal-service = { path = "vendor/libsignal-service" }
 

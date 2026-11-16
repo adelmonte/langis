@@ -134,6 +134,11 @@ pub(crate) const SETTING_VERIFIED: &str = "verified.";
 /// `identity.<ACI>`: their identity key (hex) as last seen, to notice a
 /// change.
 pub(crate) const SETTING_IDENTITY: &str = "identity.";
+/// `identity_pending.<ACI>`: a new identity key (hex) a send to them was
+/// refused for, because we'd marked their old one verified. Cleared when
+/// the user marks them verified or not (Desktop's "Safety Number Changes"
+/// confirmation).
+pub(crate) const SETTING_IDENTITY_PENDING: &str = "identity_pending.";
 
 /// Whether an attachment is fetched whole as soon as it arrives: as the
 /// media auto-download choices say (Data usage), under the limit.
@@ -715,6 +720,7 @@ pub(crate) async fn run(
     tokio::task::spawn_local(actor.clone().call_send_loop(call_sends_rx));
     actor.load_call_choices().await;
     actor.load_remote_config().await;
+    actor.load_verified_keys().await;
     crate::auto_download::load(&actor.db).await;
 
     if actor.store.is_registered().await {
@@ -1853,6 +1859,7 @@ impl Actor {
                         let notice = langis_store::Notice::Verified { who: aci.clone(), verified, local: false };
                         self.notice_about(&aci, notice).await;
                     }
+                    self.load_verified_keys().await;
                     self.emit_safety_number(conversation).await;
                 }
             }
@@ -5183,6 +5190,7 @@ impl Actor {
         for recipient in &delivery.reached {
             self.check_identity(recipient).await;
         }
+        self.note_refused_identities().await;
         self.record_delivery(conversation, message, &delivery).await
     }
 
@@ -5704,6 +5712,41 @@ impl Actor {
         self.emit(Event::SafetyNumber { conversation, result });
     }
 
+    /// Tells the store which keys are verified, so a send to a verified
+    /// contact whose key changed is held (`VerifiedKeys`). Run at start and
+    /// whenever a `verified.` setting changes.
+    pub(crate) async fn load_verified_keys(&self) {
+        let settings = match self.db.settings_with_prefix(SETTING_VERIFIED).await {
+            Ok(settings) => settings,
+            // Keep what the store has rather than forget every verification.
+            Err(error) => return warn!(%error, "couldn't read verified keys"),
+        };
+        let keys = settings
+            .into_iter()
+            .filter_map(|(sid, key)| Some((sid, hex::decode(&key).ok().filter(|k| !k.is_empty())?)))
+            .collect();
+        self.store.verified_keys().replace(keys);
+    }
+
+    /// Keys a send was refused for (a verified contact's new key): kept as
+    /// pending, so `unverified_people` holds sends to them for the user's
+    /// confirmation, with the safety-number-changed notice in their chats.
+    async fn note_refused_identities(&self) {
+        for (sid, key) in self.store.verified_keys().take_refused() {
+            let setting = format!("{SETTING_IDENTITY_PENDING}{sid}");
+            let key = hex::encode(key);
+            if self.db.setting(&setting).await.ok().flatten().as_deref() == Some(key.as_str()) {
+                continue;
+            }
+            if let Err(error) = self.db.set_setting(&setting, &key).await {
+                self.error("failed to record a changed identity key", error);
+                continue;
+            }
+            self.add_safety_notices(&sid).await;
+            self.emit(Event::AccountSettingsChanged);
+        }
+    }
+
     /// Marks their current identity key verified (or clears it) and tells
     /// our other devices, as Desktop's "Mark as verified" does.
     async fn set_verified(&self, conversation: ConversationId, verified: bool) {
@@ -5718,6 +5761,9 @@ impl Actor {
         if let Err(error) = self.db.set_setting(&setting, &value).await {
             return self.error("can't verify", error);
         }
+        // The user answered for this contact: any held send may go now.
+        let _ = self.db.remove_setting(&format!("{SETTING_IDENTITY_PENDING}{}", theirs.service_id_string())).await;
+        self.load_verified_keys().await;
         // Desktop's `addVerifiedChange` when the state changed (`_setVerified`).
         if was != verified {
             let sid = theirs.service_id_string();

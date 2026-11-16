@@ -160,13 +160,17 @@ change (sent, delivered, read, failed) comes as `MessageChanged`. Files go
 with `SendImages` or `SendFile`, and replies, reactions, edits and deletes
 each have a command.
 
-**Before sending, check safety numbers.** If the user marked someone
-verified and their safety number has changed since, Signal Desktop holds the
-send until the user confirms. Langis leaves that prompt to you: call
-`langis_core::unverified_people(db)` and `stopping_send(&conversation, &set)`
-before a send, and if anyone is listed, ask first. The core does add the
-"safety number changed" notice to the chat by itself, on receive and after
-sends.
+**Safety numbers.** If the user marked someone verified and their safety
+number changes, sends to them are held until the user confirms, as in
+Signal Desktop. The core enforces it: a send that would use a verified
+contact's new key fails for them (`SEND_ERROR_IDENTITY` in the message's
+send states) and the "safety number changed" notice goes in the chat.
+
+Your part is the prompt. Before a send, call
+`langis_core::unverified_people(db)` and `stopping_send(&conversation, &set)`;
+if anyone is listed (or a send failed that way), show who and offer
+"Send anyway". That's `Command::SetVerified { conversation, verified: false }`
+for each of them, then `Command::RetrySend` for a failed message.
 
 Mark a chat read when the user looks at it: `Command::MarkRead { conversation }`.
 That also tells the phone and, with read receipts on, the sender.

@@ -112,6 +112,10 @@ Changes:
   allocation) beyond 16 MiB, and stops a download past 1 GiB with the new
   `Error::AttachmentTooLarge`. Changed by Langis.
 
+- `Cargo.toml`: doc-tests off (`[lib] doctest = false`): the examples in
+  its docs use presage-store-sqlite as a dev-dependency, which the vendored
+  copy doesn't have. Changed by Langis.
+
 ## libsignal-service
 
 whisperfish/libsignal-service-rs at `7a7526741dfd9ad4c4894717f22651eb0506fb7e`
@@ -227,3 +231,17 @@ this revision on 2026-11-05. Changes:
 - `Cargo.toml`: upstream's dev-dependencies (less `clap`, for the examples
   that aren't vendored) and uuid's `v4` feature, so the crate's tests run
   as a workspace member (`cargo test --workspace`). Changed by Langis.
+
+## presage-store-sqlite
+
+whisperfish/presage at `4b81740610c301cbd54d95f4dbd4cadd692af95e`, the
+`presage-store-sqlite` crate, with its `.sqlx` offline query data. Vendored
+by Langis on 2026-11-16. Changes:
+
+- `src/lib.rs`, `src/protocol.rs`: `VerifiedKeys`, the identity keys the
+  app marked verified (`SqliteStore::verified_keys`). `is_trusted_identity`
+  refuses sending to a verified contact under a different key, whatever
+  `OnNewIdentity` says, and keeps the refused key for the app
+  (`take_refused`). Upstream trusts it (with `OnNewIdentity::Trust`), so a
+  send went out on a changed key without the user's confirmation, which
+  Signal Desktop asks for. Receiving is unchanged.

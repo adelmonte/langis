@@ -1367,11 +1367,14 @@ pub async fn unverified_people(db: &AppDb) -> std::collections::HashSet<String> 
     let verified = db.settings_with_prefix(actor::SETTING_VERIFIED).await.unwrap_or_default();
     let current: std::collections::HashMap<String, String> =
         db.settings_with_prefix(actor::SETTING_IDENTITY).await.unwrap_or_default().into_iter().collect();
-    verified
-        .into_iter()
-        .filter(|(sid, key)| !key.is_empty() && current.get(sid).is_some_and(|now| now != key))
-        .map(|(sid, _)| sid)
-        .collect()
+    // A send refused for their new key (the store holds it until the user
+    // answers) counts as changed too.
+    let pending: std::collections::HashMap<String, String> =
+        db.settings_with_prefix(actor::SETTING_IDENTITY_PENDING).await.unwrap_or_default().into_iter().collect();
+    let changed = |sid: &String, key: &String| {
+        current.get(sid).is_some_and(|now| now != key) || pending.get(sid).is_some_and(|new| !new.is_empty() && new != key)
+    };
+    verified.into_iter().filter(|(sid, key)| !key.is_empty() && changed(sid, key)).map(|(sid, _)| sid).collect()
 }
 
 /// Of the people a send to `conversation` goes to, those waiting for the
@@ -1585,5 +1588,34 @@ mod call_line_tests {
         assert!(!lines.busy_elsewhere(a), "its own call is RingRTC's to handle");
         lines.set(a, false);
         assert!(!lines.busy_elsewhere(b));
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use super::{actor, unverified_people};
+
+    #[tokio::test]
+    async fn a_refused_new_key_holds_sends_until_the_user_answers() {
+        let db = langis_store::AppDb::open_in_memory().await.unwrap();
+        let (alice, bob) = ("alice-aci", "bob-aci");
+        for (sid, key) in [(alice, "aa"), (bob, "bb")] {
+            db.set_setting(&format!("{}{sid}", actor::SETTING_VERIFIED), key).await.unwrap();
+            db.set_setting(&format!("{}{sid}", actor::SETTING_IDENTITY), key).await.unwrap();
+        }
+        assert!(unverified_people(&db).await.is_empty());
+
+        // A send to Alice was refused for her new key.
+        db.set_setting(&format!("{}{alice}", actor::SETTING_IDENTITY_PENDING), "cc").await.unwrap();
+        assert_eq!(unverified_people(&db).await, [alice.to_owned()].into());
+
+        // Seen on receive instead: the same.
+        db.set_setting(&format!("{}{bob}", actor::SETTING_IDENTITY), "dd").await.unwrap();
+        assert_eq!(unverified_people(&db).await.len(), 2);
+
+        // The user answered for Alice ("send anyway": no longer verified).
+        db.remove_setting(&format!("{}{alice}", actor::SETTING_IDENTITY_PENDING)).await.unwrap();
+        db.set_setting(&format!("{}{alice}", actor::SETTING_VERIFIED), "").await.unwrap();
+        assert_eq!(unverified_people(&db).await, [bob.to_owned()].into());
     }
 }
