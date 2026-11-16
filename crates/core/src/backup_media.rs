@@ -133,14 +133,15 @@ pub(crate) fn thumbnail_inner_key(root: &BackupKey, id: &MediaId) -> [u8; 64] {
 pub(crate) fn ciphertext_size(plaintext: u64) -> u64 {
     let inner = crate::long_text::ciphertext_size(plaintext);
     let padded = crate::long_text::log_pad(inner);
-    16 + (padded / 16 + 1) * 16 + 32
+    // Saturating: `plaintext` can come from a backup's locator.
+    (padded / 16).saturating_add(1).saturating_mul(16).saturating_add(48)
 }
 
 /// What the download may come to: Desktop's `checkSize` allows 5% over the
 /// expected size. A thumbnail may be up to twice its usual most.
 pub(crate) fn download_limit(size: u64, thumbnail: bool) -> u64 {
     let expected = if thumbnail { ciphertext_size(MAX_THUMBNAIL_BYTES * 2) } else { ciphertext_size(size) };
-    expected + expected / 20
+    expected.saturating_add(expected / 20)
 }
 
 fn decrypt_layer(key: [u8; 64], data: &mut Vec<u8>, what: &str) -> anyhow::Result<()> {

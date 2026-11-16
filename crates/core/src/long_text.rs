@@ -70,7 +70,8 @@ pub(crate) fn log_pad(size: u64) -> u64 {
 /// (`ts/util/AttachmentCrypto.std.ts`), so this does too.
 pub(crate) fn ciphertext_size(plaintext: u64) -> u64 {
     let padded = log_pad(log_pad(plaintext));
-    16 + (padded / 16 + 1) * 16 + 32
+    // IV, blocks, MAC; saturating, as sizes can come from other devices.
+    (padded / 16).saturating_add(1).saturating_mul(16).saturating_add(48)
 }
 
 #[cfg(test)]

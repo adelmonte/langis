@@ -297,11 +297,17 @@ pub async fn media(client: &reqwest::Client, path: &str) -> anyhow::Result<(Vec<
     if response.content_length().is_some_and(|n| n as usize > MAX_MEDIA_BYTES) {
         bail!("release note media is too large");
     }
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_MEDIA_BYTES {
-        bail!("release note media is too large");
+    // Read at most one byte past the cap: without a Content-Length the
+    // body's size is only known as it comes.
+    let mut bytes = Vec::new();
+    let mut response = response;
+    while let Some(chunk) = response.chunk().await? {
+        bytes.extend_from_slice(&chunk);
+        if bytes.len() > MAX_MEDIA_BYTES {
+            bail!("release note media is too large");
+        }
     }
-    Ok((bytes.to_vec(), content_type))
+    Ok((bytes, content_type))
 }
 
 /// Desktop's check: the media's URL must stay on the resources origin.

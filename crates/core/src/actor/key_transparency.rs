@@ -88,10 +88,15 @@ impl Actor {
             kt::Request { aci, identity_key: *identity.public_key(), e164, username_hash: None, mode: CheckMode::ContactCheck };
         let chat = self.kt_chat().await?;
         kt::check(&self.db, &chat, &request).await?;
+        if kt::self_health(&self.db).await.is_none() {
+            self.kt_self_check().await?;
+        }
+        // The self check can return without checking (turned off midway,
+        // no identity key): only a recorded success counts.
         match kt::self_health(&self.db).await {
-            None => self.kt_self_check().await,
             Some(Health::Ok) => Ok(()),
             Some(_) => Err(Failure::Other("our own account's check failed".into())),
+            None => Err(Failure::Other("our own account wasn't checked".into())),
         }
     }
 

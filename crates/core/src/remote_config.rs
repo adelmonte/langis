@@ -211,7 +211,7 @@ impl RemoteConfig {
     pub fn attachment_max_receive_bytes(&self) -> u64 {
         self.int("global.attachments.maxReceiveBytes")
             .and_then(|n| u64::try_from(n).ok())
-            .unwrap_or_else(|| self.attachment_max_bytes() * 5 / 4)
+            .unwrap_or_else(|| self.attachment_max_bytes().saturating_mul(5) / 4)
     }
 
     /// Attachments smaller than this download on their own
