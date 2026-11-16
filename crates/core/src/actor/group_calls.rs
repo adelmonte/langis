@@ -522,6 +522,14 @@ impl Actor {
             return info!("a group call ring in a message request");
         }
         let ringer = aci_of(&sender);
+        // Only a member may ring the group: anyone who knows its id (a
+        // removed member) could otherwise keep ringing everyone, as the
+        // receive path drops group messages from non-members.
+        if matches!(ring, langis_calls::Ring::Requested)
+            && !self.group_members(key).await.iter().any(|aci| ringer.as_deref() == Some(aci.service_id_string().as_str()))
+        {
+            return info!("a group call ring from someone not in the group");
+        }
         let record = GroupCallRecord {
             call_id: ring_id,
             era: None,
