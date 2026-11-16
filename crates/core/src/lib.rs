@@ -288,10 +288,9 @@ pub struct Config {
     pub device_name: String,
     /// Demo mode: sample data, never connects to Signal (see `demo.rs`).
     pub demo: bool,
-    /// Where this profile's data may have been before it moved (the data
-    /// directories of the app's former names, Ziggy and Signal GPUI): the
-    /// paths stored for files in each are rewritten once to name
-    /// `data_dir` instead.
+    /// Directories this profile's data was in before the frontend moved it
+    /// to `data_dir` (usually empty): the file paths stored under each are
+    /// rewritten once to name `data_dir` instead.
     pub former_data_dirs: Vec<PathBuf>,
     /// Every account's calls, shared by their backends: while one is in a
     /// call, the others turn calls away as busy.

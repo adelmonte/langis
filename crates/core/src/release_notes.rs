@@ -17,7 +17,7 @@ use langis_store::{StyleSpan, TextStyle};
 const RESOURCES: &str = "https://updates2.signal.org";
 const MANIFEST: &str = "/dynamic/release-notes/release-notes-v2.json";
 const NOTES: &str = "/static/release-notes";
-/// What Desktop's updater reads for the current macOS release.
+/// Where Desktop's updater reads the current release (the version is the same on every platform).
 const DESKTOP_RELEASE: &str = "/desktop/latest-mac.yml";
 /// Desktop's `BUCKET_VALUE_HASH_SALT`.
 const BUCKET_SALT: &str = "ReleaseNoteAndMegaphoneFetcher";

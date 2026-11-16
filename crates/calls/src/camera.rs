@@ -16,7 +16,7 @@ use crate::FrameSlot;
 /// Frames in a row that may fail (100 ms apart) before the camera stops.
 const MAX_FAILURES: u32 = 50;
 
-/// How long to wait for the user to answer macOS's camera prompt.
+/// How long to wait for the user to grant camera access, where the system asks.
 const PERMISSION_WAIT: Duration = Duration::from_secs(60);
 
 /// A running camera; dropping it stops it.
@@ -105,7 +105,7 @@ pub(crate) fn list() -> Vec<crate::Device> {
 }
 
 fn run(stop: &AtomicBool, source: &VideoSource, preview: &FrameSlot, choice: Option<&str>) -> anyhow::Result<()> {
-    // macOS asks for camera access the first time.
+    // Some systems ask for camera access the first time (a no-op on V4L2).
     nokhwa::nokhwa_initialize(|granted| tracing::info!(granted, "camera access"));
     let asked = Instant::now();
     while !nokhwa::nokhwa_check() {

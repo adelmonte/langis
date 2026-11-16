@@ -44,8 +44,7 @@ libsignal-service = { path = "vendor/libsignal-service" }
 # presage-store-sqlite links SQLCipher through whisperfish's libsqlite3-sys fork.
 libsqlite3-sys = { git = "https://github.com/whisperfish/rusqlite", rev = "2a42b3354c9194700d08aa070f70a131a470e7dc" }
 
-# On macOS debug info stays in per-build .o files that cargo never removes;
-# line tables keep backtraces useful at a fraction of the size.
+# Line tables keep backtraces useful at a fraction of the size.
 [profile.dev]
 debug = "line-tables-only"
 

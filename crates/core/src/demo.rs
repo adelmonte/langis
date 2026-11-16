@@ -1,6 +1,6 @@
 //! Offline demo backend: seeds sample conversations and echoes sends locally.
 //! Used for UI development and screenshots without linking a phone
-//! (`SIGNAL_GPUI_DEMO=1`). Never connects to Signal; the only network
+//! (`Config::demo`). Never connects to Signal; the only network
 //! requests are previews of links you type and, with a Giphy key, GIF
 //! search and downloads.
 
@@ -407,7 +407,7 @@ async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
         .await?;
     // A GIF (a short looping video), drawn by ffmpeg when it's installed.
     let clip = data_dir.join("attachments").join("demo-gif.mp4");
-    let made = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"].iter().any(|ffmpeg| {
+    let made = ["ffmpeg"].iter().any(|ffmpeg| {
         std::process::Command::new(ffmpeg)
             .args(["-v", "error", "-y", "-f", "lavfi", "-i", "gradients=size=320x180:rate=15:duration=2:speed=0.05", "-pix_fmt", "yuv420p"])
             .arg(&clip)

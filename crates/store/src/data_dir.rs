@@ -1,7 +1,7 @@
 //! Stored file paths are absolute: attachments, thumbnails, previews,
 //! stories, avatars, badges and sticker covers name files in the data
-//! directory. When the directory moves (Signal GPUI's became Ziggy's, then
-//! Vernam's), they're rewritten to name the new one.
+//! directory. When a frontend moves the directory, they're rewritten to name
+//! the new one (`Config::former_data_dirs`).
 
 use sqlx::Row as _;
 

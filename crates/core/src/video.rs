@@ -8,8 +8,8 @@
 //! standard quality unless the sender picks high quality for that message;
 //! we have no such choice, so it's always standard.
 //!
-//! AVFoundation does the work, so this is macOS only; elsewhere videos go
-//! as they are.
+//! Langis has no transcoder yet, so videos go as they are. The sizing
+//! rules below are kept for one (an ffmpeg or GStreamer backend).
 
 use std::path::Path;
 
@@ -72,11 +72,11 @@ pub fn duration_label(secs: f64) -> String {
     if minutes == 1 { "1 minute".into() } else { format!("{minutes} minutes") }
 }
 
-/// Desktop's MIME types it transcodes (`isVideoTypeSupported`): MP4, Ogg
-/// and WebM. AVFoundation reads only MP4 of those; the others go as they
-/// are, as everything does off macOS.
-pub fn transcodes(content_type: &str) -> bool {
-    cfg!(target_os = "macos") && content_type == "video/mp4"
+/// Whether a video of this type is re-encoded before sending. Desktop
+/// transcodes MP4, Ogg and WebM (`isVideoTypeSupported`); Langis has no
+/// transcoder yet, so nothing is.
+pub fn transcodes(_content_type: &str) -> bool {
+    false
 }
 
 /// What a video holds, read before it's sent.
@@ -125,345 +125,15 @@ pub fn encoded_size(natural: (u32, u32), rotated: bool, resolution: u32) -> (u32
 /// Reads a video's length, bitrates and size. `None` when it can't be
 /// read as a video.
 pub fn probe(path: &Path) -> Option<VideoInfo> {
-    #[cfg(target_os = "macos")]
-    {
-        mac::probe(path)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = path;
-        None
-    }
+    let _ = path;
+    None
 }
 
 /// Encodes `input` to `output` (a new file) at `target`. The caller
 /// decides whether the result is worth sending.
 pub fn transcode(input: &Path, output: &Path, target: &TranscodeTarget) -> anyhow::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        // On tokio's long-lived blocking threads: autoreleased objects go
-        // when it's done.
-        objc2::rc::autoreleasepool(|_| mac::transcode(input, output, target))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (input, output, target);
-        anyhow::bail!("videos can't be re-encoded here")
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod mac {
-    use std::path::Path;
-    use std::sync::mpsc;
-    use std::time::{Duration, Instant};
-
-    use anyhow::{Context as _, bail};
-    use objc2::rc::Retained;
-    use objc2::runtime::AnyObject;
-    use objc2_av_foundation::{
-        AVAsset, AVAssetReader, AVAssetReaderStatus, AVAssetReaderTrackOutput, AVAssetTrack, AVAssetWriter, AVAssetWriterInput,
-        AVAssetWriterStatus, AVFileTypeMPEG4, AVMediaTypeAudio, AVMediaTypeVideo, AVURLAsset, AVVideoAverageBitRateKey,
-        AVVideoCodecKey, AVVideoCodecTypeH264, AVVideoCompressionPropertiesKey, AVVideoHeightKey, AVVideoWidthKey,
-    };
-    use objc2_core_media::{CMFormatDescription, CMTime};
-    use objc2_foundation::{NSDictionary, NSNumber, NSString, NSURL};
-
-    use super::{TranscodeTarget, VideoInfo};
-
-    /// Core Audio's `kAudioFormatMPEG4AAC` and `kAudioFormatLinearPCM`.
-    const AAC: u32 = u32::from_be_bytes(*b"aac ");
-    const LINEAR_PCM: u32 = u32::from_be_bytes(*b"lpcm");
-
-    /// Sound settings: 48 kHz stereo in `format`, 16-bit interleaved
-    /// little-endian for PCM. AVFoundation's audio keys are strings equal
-    /// to their names (`AVFormatIDKey` is @"AVFormatIDKey").
-    fn audio_settings(format: u32, extra: &[(&str, i64)]) -> Retained<NSDictionary<NSString, AnyObject>> {
-        let mut pairs: Vec<(Retained<NSString>, Retained<NSNumber>)> = vec![
-            (NSString::from_str("AVFormatIDKey"), NSNumber::new_u32(format)),
-            (NSString::from_str("AVSampleRateKey"), NSNumber::new_f64(48_000.)),
-            (NSString::from_str("AVNumberOfChannelsKey"), NSNumber::new_i64(2)),
-        ];
-        if format == LINEAR_PCM {
-            pairs.push((NSString::from_str("AVLinearPCMBitDepthKey"), NSNumber::new_i64(16)));
-            for key in ["AVLinearPCMIsFloatKey", "AVLinearPCMIsBigEndianKey", "AVLinearPCMIsNonInterleaved"] {
-                pairs.push((NSString::from_str(key), NSNumber::new_bool(false)));
-            }
-        }
-        pairs.extend(extra.iter().map(|(key, value)| (NSString::from_str(key), NSNumber::new_i64(*value))));
-        let refs: Vec<(&NSString, &AnyObject)> = pairs.iter().map(|(k, v)| (&**k, v.as_ref() as &AnyObject)).collect();
-        dictionary(&refs)
-    }
-
-    /// A writer that hasn't finished by then has stalled.
-    const STALL: Duration = Duration::from_secs(60);
-
-    fn url(path: &Path) -> anyhow::Result<Retained<NSURL>> {
-        let path = path.to_str().context("not a UTF-8 path")?;
-        Ok(NSURL::fileURLWithPath(&NSString::from_str(path)))
-    }
-
-    fn asset(path: &Path) -> anyhow::Result<Retained<AVURLAsset>> {
-        Ok(unsafe { AVURLAsset::URLAssetWithURL_options(&*url(path)?, None) })
-    }
-
-    fn first_track(asset: &AVAsset, video: bool) -> Option<Retained<AVAssetTrack>> {
-        let kind = unsafe { if video { AVMediaTypeVideo } else { AVMediaTypeAudio } }?;
-        #[allow(deprecated)]
-        let tracks = unsafe { asset.tracksWithMediaType(kind) };
-        tracks.firstObject()
-    }
-
-    /// Whether the track is shown a quarter turn round.
-    fn rotated(track: &AVAssetTrack) -> bool {
-        let t = unsafe { track.preferredTransform() };
-        t.a.abs() < 0.5 && t.b.abs() > 0.5
-    }
-
-    fn natural_size(track: &AVAssetTrack) -> (u32, u32) {
-        let size = unsafe { track.naturalSize() };
-        (size.width.abs().round() as u32, size.height.abs().round() as u32)
-    }
-
-    fn seconds(time: CMTime) -> f64 {
-        let s = unsafe { time.seconds() };
-        if s.is_finite() { s } else { 0. }
-    }
-
-    /// `None` without a length or a size: it can't be judged as a video.
-    pub(super) fn probe(path: &Path) -> Option<VideoInfo> {
-        // It runs on long-lived threads: what AVFoundation autoreleases
-        // goes when it's done.
-        objc2::rc::autoreleasepool(|_| probe_in_pool(path))
-    }
-
-    fn probe_in_pool(path: &Path) -> Option<VideoInfo> {
-        let asset = asset(path).ok()?;
-        let video = first_track(&asset, true)?;
-        let audio = first_track(&asset, false);
-        let (w, h) = natural_size(&video);
-        let (display_width, display_height) = if rotated(&video) { (h, w) } else { (w, h) };
-        let duration_secs = seconds(unsafe { asset.duration() });
-        if duration_secs <= 0. || w == 0 || h == 0 {
-            return None;
-        }
-        let audio_copied = audio.as_ref().is_some_and(|track| {
-            let descriptions = unsafe { track.formatDescriptions() };
-            descriptions.firstObject().is_some_and(|d| {
-                let d = unsafe { &*(&*d as *const AnyObject).cast::<CMFormatDescription>() };
-                (unsafe { d.media_sub_type() }) == AAC
-            })
-        });
-        Some(VideoInfo {
-            duration_secs,
-            audio_copied,
-            video_bps: f64::from(unsafe { video.estimatedDataRate() }),
-            audio_bps: audio.map_or(0., |a| f64::from(unsafe { a.estimatedDataRate() })),
-            display_width,
-            display_height,
-        })
-    }
-
-    fn dictionary(pairs: &[(&NSString, &AnyObject)]) -> Retained<NSDictionary<NSString, AnyObject>> {
-        let (keys, values): (Vec<&NSString>, Vec<&AnyObject>) = pairs.iter().copied().unzip();
-        NSDictionary::from_slices(&keys, &values)
-    }
-
-    fn cf_key(key: &objc2_core_foundation::CFString) -> &NSString {
-        // CFString and NSString are toll-free bridged.
-        unsafe { &*(key as *const objc2_core_foundation::CFString).cast::<NSString>() }
-    }
-
-    /// An AVFoundation object moved to the thread that drives one track.
-    /// Each input and output is used by that thread alone, as Apple's
-    /// examples drive each from its own queue.
-    struct Sendable<T>(T);
-    unsafe impl<T> Send for Sendable<T> {}
-
-    /// Copies one track's samples from reader to writer until it ends;
-    /// `false` when the writer refuses one, fails, or stops taking them.
-    fn pump(output: &AVAssetReaderTrackOutput, input: &AVAssetWriterInput, writer: &AVAssetWriter) -> bool {
-        let mut progress = Instant::now();
-        loop {
-            if !unsafe { input.isReadyForMoreMediaData() } {
-                if progress.elapsed() > STALL || unsafe { writer.status() } == AVAssetWriterStatus::Failed {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(2));
-                continue;
-            }
-            // Each sample's autoreleased objects go with it.
-            let step = objc2::rc::autoreleasepool(|_| match unsafe { output.copyNextSampleBuffer() } {
-                Some(sample) => Some(unsafe { input.appendSampleBuffer(&sample) }),
-                None => None,
-            });
-            match step {
-                Some(true) => progress = Instant::now(),
-                Some(false) => return false,
-                None => {
-                    unsafe { input.markAsFinished() };
-                    return true;
-                }
-            }
-        }
-    }
-
-    pub(super) fn transcode(input: &Path, output: &Path, target: &TranscodeTarget) -> anyhow::Result<()> {
-        let source = asset(input)?;
-        let video = first_track(&source, true).context("no video track")?;
-        let audio = first_track(&source, false);
-        let natural = natural_size(&video);
-        if natural.0 == 0 || natural.1 == 0 {
-            bail!("the video has no size");
-        }
-        let (width, height) = super::encoded_size(natural, rotated(&video), target.resolution);
-        // Never above the source's (Desktop commit 68662e4), whole bits
-        // (commit beb0a9f).
-        let source_bps = f64::from(unsafe { video.estimatedDataRate() });
-        let wanted = target.video_bitrate_mbps * 1e6;
-        let bitrate = if source_bps > 0. { source_bps.min(wanted) } else { wanted }.floor() as i64;
-
-        let reader = unsafe { AVAssetReader::assetReaderWithAsset_error(&source) }
-            .map_err(|e| anyhow::anyhow!("can't read the video: {}", e.localizedDescription()))?;
-        // Decoded and scaled as the reader goes (it scales 8-bit formats).
-        let pixel_format = NSNumber::new_u32(objc2_core_video::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
-        let (w, h) = (NSNumber::new_u32(width), NSNumber::new_u32(height));
-        let decoded = unsafe {
-            dictionary(&[
-                (cf_key(objc2_core_video::kCVPixelBufferPixelFormatTypeKey), &pixel_format),
-                (cf_key(objc2_core_video::kCVPixelBufferWidthKey), &w),
-                (cf_key(objc2_core_video::kCVPixelBufferHeightKey), &h),
-            ])
-        };
-        let video_out = unsafe { AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(&video, Some(&decoded)) };
-        unsafe { video_out.setAlwaysCopiesSampleData(false) };
-        // AVFoundation raises (and the process aborts) on an output it
-        // can't take, so each is asked first.
-        if !unsafe { reader.canAddOutput(&video_out) } {
-            bail!("the reader won't decode the video");
-        }
-        unsafe { reader.addOutput(&video_out) };
-        // AAC sound is copied as it is; any other is re-encoded as AAC, as
-        // Desktop's conversion does.
-        let descriptions = audio.as_ref().map(|track| unsafe { track.formatDescriptions() });
-        let first = descriptions.as_ref().and_then(|d| d.firstObject());
-        // The array holds CMFormatDescriptions, kept alive by `first`.
-        let hint = first.as_deref().map(|d| unsafe { &*(d as *const AnyObject).cast::<CMFormatDescription>() });
-        let copy_audio = hint.is_some_and(|h| unsafe { h.media_sub_type() } == AAC);
-        let pcm = audio_settings(LINEAR_PCM, &[]);
-        let audio_out = match &audio {
-            Some(track) => {
-                let settings = (!copy_audio).then_some(&*pcm);
-                let out = unsafe { AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(track, settings) };
-                unsafe { out.setAlwaysCopiesSampleData(false) };
-                if !unsafe { reader.canAddOutput(&out) } {
-                    bail!("the reader won't decode the sound");
-                }
-                unsafe { reader.addOutput(&out) };
-                Some(out)
-            }
-            None => None,
-        };
-
-        let file_type = unsafe { AVFileTypeMPEG4 }.context("no MP4 file type")?;
-        let writer = unsafe { AVAssetWriter::assetWriterWithURL_fileType_error(&*url(output)?, file_type) }
-            .map_err(|e| anyhow::anyhow!("can't write the video: {}", e.localizedDescription()))?;
-        // The index first, so it plays while it downloads.
-        unsafe { writer.setShouldOptimizeForNetworkUse(true) };
-        let codec = unsafe { AVVideoCodecTypeH264 }.context("no H.264")?;
-        let bitrate = NSNumber::new_i64(bitrate);
-        let compression = unsafe { dictionary(&[(AVVideoAverageBitRateKey.context("no bitrate key")?, &bitrate)]) };
-        let encoded = unsafe {
-            dictionary(&[
-                (AVVideoCodecKey.context("no codec key")?, codec),
-                (AVVideoWidthKey.context("no width key")?, &w),
-                (AVVideoHeightKey.context("no height key")?, &h),
-                (AVVideoCompressionPropertiesKey.context("no compression key")?, &compression),
-            ])
-        };
-        let video_kind = unsafe { AVMediaTypeVideo }.context("no video type")?;
-        let video_in = unsafe { AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(video_kind, Some(&encoded)) };
-        // Its rotation, with the move that goes with it in the new size's
-        // pixels.
-        let mut transform = unsafe { video.preferredTransform() };
-        let scale = (f64::from(width) / f64::from(natural.0)) as objc2_core_foundation::CGFloat;
-        transform.tx *= scale;
-        transform.ty *= scale;
-        unsafe { video_in.setTransform(transform) };
-        if !unsafe { writer.canAddInput(&video_in) } {
-            bail!("the writer won't take the video");
-        }
-        unsafe { writer.addInput(&video_in) };
-        let aac = audio_settings(AAC, &[("AVEncoderBitRateKey", 128_000)]);
-        let audio_in = match &audio {
-            Some(_) => {
-                let kind = unsafe { AVMediaTypeAudio }.context("no audio type")?;
-                let input = if copy_audio {
-                    unsafe { AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings_sourceFormatHint(kind, None, hint) }
-                } else {
-                    unsafe { AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings(kind, Some(&aac)) }
-                };
-                if !unsafe { writer.canAddInput(&input) } {
-                    bail!("the writer won't take the audio");
-                }
-                unsafe { writer.addInput(&input) };
-                Some(input)
-            }
-            None => None,
-        };
-
-        if !unsafe { reader.startReading() } {
-            bail!("reading failed: {:?}", unsafe { reader.error() }.map(|e| e.localizedDescription()));
-        }
-        if !unsafe { writer.startWriting() } {
-            unsafe { reader.cancelReading() };
-            bail!("writing failed: {:?}", unsafe { writer.error() }.map(|e| e.localizedDescription()));
-        }
-        unsafe { writer.startSessionAtSourceTime(objc2_core_media::kCMTimeZero) };
-
-        // Each track on its own thread: the writer interleaves them and
-        // waits on whichever is behind.
-        let video_job = Sendable((video_out, video_in, writer.clone()));
-        let video_thread = std::thread::spawn(move || {
-            let job = video_job;
-            pump(&job.0.0, &job.0.1, &job.0.2)
-        });
-        let audio_ok = match (audio_out, audio_in) {
-            (Some(out), Some(input)) => pump(&out, &input, &writer),
-            _ => true,
-        };
-        if !audio_ok {
-            // So the video's thread isn't left waiting on the reader.
-            unsafe { reader.cancelReading() };
-        }
-        let video_ok = video_thread.join().unwrap_or(false);
-        if !video_ok || !audio_ok || unsafe { reader.status() } == AVAssetReaderStatus::Failed {
-            unsafe { reader.cancelReading() };
-            unsafe { writer.cancelWriting() };
-            bail!(
-                "re-encoding failed: {:?} {:?}",
-                unsafe { reader.error() }.map(|e| e.localizedDescription()),
-                unsafe { writer.error() }.map(|e| e.localizedDescription())
-            );
-        }
-
-        let (done, finished) = mpsc::channel();
-        let handler = block2::RcBlock::new(move || {
-            let _ = done.send(());
-        });
-        unsafe { writer.finishWritingWithCompletionHandler(&handler) };
-        let started = Instant::now();
-        while finished.recv_timeout(Duration::from_millis(200)).is_err() {
-            // (Cancelling isn't allowed once finishing has begun.)
-            if started.elapsed() > STALL {
-                bail!("finishing the video stalled");
-            }
-        }
-        match unsafe { writer.status() } {
-            AVAssetWriterStatus::Completed => Ok(()),
-            _ => bail!("finishing the video failed: {:?}", unsafe { writer.error() }.map(|e| e.localizedDescription())),
-        }
-    }
+    let _ = (input, output, target);
+    anyhow::bail!("videos can't be re-encoded yet")
 }
 
 #[cfg(test)]
@@ -496,12 +166,14 @@ mod tests {
         assert_eq!(encoded_size((640, 360), false, 720), (640, 360));
     }
 
-    /// A real re-encode, of a clip ffmpeg makes (skipped without it).
+    /// A real re-encode, of a clip ffmpeg makes (skipped without it). Kept
+    /// for when Langis gets a transcoder.
     #[test]
+    #[ignore = "no transcoder yet"]
     fn a_1080p_clip_comes_out_480p_with_its_sound() {
         let dir = tempfile::tempdir().unwrap();
         let (input, output) = (dir.path().join("in.mp4"), dir.path().join("out.mp4"));
-        let made = std::process::Command::new("/opt/homebrew/bin/ffmpeg")
+        let made = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30:duration=3"])
             .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-b:v", "8M"])
             .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
@@ -520,7 +192,7 @@ mod tests {
 
         // Sound an MP4 can't take as it is (ALAC here) is re-encoded as AAC.
         let (alac, alac_out) = (dir.path().join("alac.mp4"), dir.path().join("alac-out.mp4"));
-        let made = std::process::Command::new("/opt/homebrew/bin/ffmpeg")
+        let made = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-i"])
             .arg(&input)
             .args(["-c:v", "copy", "-c:a", "alac"])
@@ -536,7 +208,7 @@ mod tests {
         // Stored landscape and shown upright, as phones record: still shown
         // upright, its shown width 480.
         let (turned, turned_out) = (dir.path().join("turned.mp4"), dir.path().join("turned-out.mp4"));
-        let made = std::process::Command::new("/opt/homebrew/bin/ffmpeg")
+        let made = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-display_rotation", "90", "-i"])
             .arg(&input)
             .args(["-c", "copy"])
