@@ -8,10 +8,15 @@
 //! standard quality unless the sender picks high quality for that message;
 //! we have no such choice, so it's always standard.
 //!
-//! langis has no transcoder yet, so videos go as they are. The sizing
-//! rules below are kept for one (an ffmpeg or GStreamer backend).
+//! The encoding is done by the system's `ffmpeg` and `ffprobe` (with
+//! libx264), run as programs. Without them, videos go as they are, as
+//! Desktop sends a video it can't transcode.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+
+use anyhow::{Context as _, bail};
 
 /// One quality step of Desktop's `TranscodingConfigSchema`: for videos up
 /// to `max_duration_secs` long.
@@ -72,11 +77,39 @@ pub fn duration_label(secs: f64) -> String {
     if minutes == 1 { "1 minute".into() } else { format!("{minutes} minutes") }
 }
 
-/// Whether a video of this type is re-encoded before sending. Desktop
-/// transcodes MP4, Ogg and WebM (`isVideoTypeSupported`); langis has no
-/// transcoder yet, so nothing is.
-pub fn transcodes(_content_type: &str) -> bool {
-    false
+/// Whether a video of this type is re-encoded before sending: MP4, Ogg
+/// and WebM, as Desktop (`isVideoTypeSupported`), when ffmpeg is installed.
+pub fn transcodes(content_type: &str) -> bool {
+    let base = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
+    matches!(base.as_str(), "video/mp4" | "video/ogg" | "video/webm") && tools().is_some()
+}
+
+/// Where `ffmpeg` and `ffprobe` are, looked up once: both on `PATH`, and
+/// this ffmpeg can encode H.264 with libx264.
+fn tools() -> Option<&'static (PathBuf, PathBuf)> {
+    static TOOLS: OnceLock<Option<(PathBuf, PathBuf)>> = OnceLock::new();
+    TOOLS
+        .get_or_init(|| {
+            let find = |name: &str| {
+                std::env::split_paths(&std::env::var_os("PATH")?).map(|dir| dir.join(name)).find(|path| path.is_file())
+            };
+            let (ffmpeg, ffprobe) = (find("ffmpeg")?, find("ffprobe")?);
+            let encoders = Command::new(&ffmpeg).args(["-hide_banner", "-encoders"]).output().ok()?;
+            if !String::from_utf8_lossy(&encoders.stdout).contains("libx264") {
+                tracing::info!("ffmpeg has no libx264; videos are sent as they are");
+                return None;
+            }
+            Some((ffmpeg, ffprobe))
+        })
+        .as_ref()
+}
+
+/// A path ffmpeg reads as a plain file, whatever its name (a `:` would
+/// otherwise name a protocol, a leading `-` an option).
+fn file_arg(path: &Path) -> std::ffi::OsString {
+    let mut arg = std::ffi::OsString::from("file:");
+    arg.push(path.as_os_str());
+    arg
 }
 
 /// What a video holds, read before it's sent.
@@ -122,18 +155,84 @@ pub fn encoded_size(natural: (u32, u32), rotated: bool, resolution: u32) -> (u32
     (even(w), even(h))
 }
 
-/// Reads a video's length, bitrates and size. `None` when it can't be
-/// read as a video.
+/// Reads a video's length, bitrates and size with ffprobe. `None` when it
+/// can't be read as a video (or there's no ffprobe).
 pub fn probe(path: &Path) -> Option<VideoInfo> {
-    let _ = path;
-    None
+    let (_, ffprobe) = tools()?;
+    let output = Command::new(ffprobe)
+        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+        .arg(file_arg(path))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_probe(&serde_json::from_slice(&output.stdout).ok()?)
 }
 
-/// Encodes `input` to `output` (a new file) at `target`. The caller
-/// decides whether the result is worth sending.
+/// `probe`'s reading of ffprobe's JSON.
+fn parse_probe(json: &serde_json::Value) -> Option<VideoInfo> {
+    // ffprobe writes numbers as strings.
+    let number = |value: &serde_json::Value| -> Option<f64> {
+        value.as_f64().or_else(|| value.as_str()?.parse().ok()).filter(|n: &f64| n.is_finite())
+    };
+    let streams = json.get("streams")?.as_array()?;
+    let kind = |stream: &&serde_json::Value, kind: &str| stream.get("codec_type").and_then(|t| t.as_str()) == Some(kind);
+    let video = streams.iter().find(|s| kind(s, "video"))?;
+    let audio = streams.iter().find(|s| kind(s, "audio"));
+    let (width, height) = (video.get("width")?.as_u64()? as u32, video.get("height")?.as_u64()? as u32);
+    let duration = json.pointer("/format/duration").and_then(number).or_else(|| video.get("duration").and_then(number))?;
+    // A quarter turn (phones store portrait video as landscape, turned).
+    let rotation = video
+        .get("side_data_list")
+        .and_then(|list| list.as_array())
+        .and_then(|list| list.iter().find_map(|d| d.get("rotation").and_then(number)))
+        .or_else(|| video.pointer("/tags/rotate").and_then(number))
+        .unwrap_or(0.);
+    let turned = (rotation.abs().round() as i64 / 90) % 2 == 1;
+    let audio_bps = audio.and_then(|a| a.get("bit_rate")).and_then(number).unwrap_or(0.);
+    let audio_bps = if audio.is_some() && audio_bps == 0. { REENCODED_AUDIO_BPS } else { audio_bps };
+    let video_bps = video.get("bit_rate").and_then(number).or_else(|| {
+        // Not given per stream (WebM): the whole file's, less the sound.
+        Some(json.pointer("/format/bit_rate").and_then(number)? - audio_bps).filter(|b| *b > 0.)
+    });
+    let audio_copied = audio.and_then(|a| a.get("codec_name")).and_then(|c| c.as_str()) == Some("aac");
+    let (display_width, display_height) = if turned { (height, width) } else { (width, height) };
+    Some(VideoInfo { duration_secs: duration, video_bps: video_bps.unwrap_or(0.), audio_bps, audio_copied, display_width, display_height })
+}
+
+/// Encodes `input` to `output` (a new file) at `target` with ffmpeg:
+/// H.264 in an MP4 for streaming, its shorter shown side at most the
+/// target's, its bitrate at most the target's and never above the
+/// original's, AAC sound (copied when it already is), no metadata. The
+/// caller decides whether the result is worth sending.
 pub fn transcode(input: &Path, output: &Path, target: &TranscodeTarget) -> anyhow::Result<()> {
-    let _ = (input, output, target);
-    anyhow::bail!("videos can't be re-encoded yet")
+    let (ffmpeg, _) = tools().context("ffmpeg isn't installed")?;
+    let info = probe(input).context("not a video ffprobe can read")?;
+    // ffmpeg turns the picture upright before the scale filter, so the
+    // size is the shown one.
+    let (width, height) = encoded_size((info.display_width, info.display_height), false, target.resolution);
+    let wanted = target.video_bitrate_mbps * 1e6;
+    let bitrate = if info.video_bps > 0. { info.video_bps.min(wanted) } else { wanted } as u64;
+    let mut command = Command::new(ffmpeg);
+    command
+        .args(["-v", "error", "-nostdin", "-n", "-i"])
+        .arg(file_arg(input))
+        .args(["-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-map_chapters", "-1"])
+        .args(["-vf", &format!("scale={width}:{height}")])
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"])
+        .args(["-b:v", &bitrate.to_string(), "-maxrate", &bitrate.to_string(), "-bufsize", &(bitrate * 2).to_string()]);
+    if info.audio_copied {
+        command.args(["-c:a", "copy"]);
+    } else {
+        command.args(["-c:a", "aac", "-b:a", &(REENCODED_AUDIO_BPS as u64).to_string()]);
+    }
+    let result = command.args(["-movflags", "+faststart", "-f", "mp4"]).arg(file_arg(output)).output().context("running ffmpeg")?;
+    if !result.status.success() {
+        let error = String::from_utf8_lossy(&result.stderr);
+        bail!("ffmpeg failed: {}", error.lines().last().unwrap_or_default());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -166,16 +265,16 @@ mod tests {
         assert_eq!(encoded_size((640, 360), false, 720), (640, 360));
     }
 
-    /// A real re-encode, of a clip ffmpeg makes (skipped without it). Kept
-    /// for when langis gets a transcoder.
+    /// A real re-encode, of a clip ffmpeg makes (skipped without it).
     #[test]
-    #[ignore = "no transcoder yet"]
     fn a_1080p_clip_comes_out_480p_with_its_sound() {
         let dir = tempfile::tempdir().unwrap();
         let (input, output) = (dir.path().join("in.mp4"), dir.path().join("out.mp4"));
         let made = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30:duration=3"])
             .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:v", "libx264", "-b:v", "8M"])
+            // Constant bitrate: a test pattern would otherwise come out tiny.
+            .args(["-minrate", "8M", "-maxrate", "8M", "-bufsize", "2M", "-x264-params", "nal-hrd=cbr"])
             .args(["-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
             .arg(&input)
             .status();
@@ -223,6 +322,33 @@ mod tests {
         transcode(&turned, &turned_out, &target(480, 1.0, 900.)).unwrap();
         let after = probe(&turned_out).unwrap();
         assert_eq!((after.display_width, after.display_height), (480, 854));
+    }
+
+    #[test]
+    fn probes_read_size_turn_and_bitrates() {
+        let json = serde_json::json!({
+            "streams": [
+                {"codec_type": "video", "width": 1920, "height": 1080, "bit_rate": "8000000",
+                 "side_data_list": [{"rotation": -90}]},
+                {"codec_type": "audio", "codec_name": "opus"}
+            ],
+            "format": {"duration": "12.5", "bit_rate": "8200000"}
+        });
+        let info = parse_probe(&json).unwrap();
+        assert_eq!((info.display_width, info.display_height), (1080, 1920));
+        assert_eq!(info.duration_secs, 12.5);
+        assert_eq!(info.video_bps, 8e6);
+        // Sound with no bitrate given counts as what it'll be re-encoded at.
+        assert_eq!(info.audio_bps, REENCODED_AUDIO_BPS);
+        assert!(!info.audio_copied);
+        // No video at all: not a video.
+        assert!(parse_probe(&serde_json::json!({"streams": [{"codec_type": "audio"}], "format": {}})).is_none());
+        // WebM gives no per-stream bitrate: the file's, less the sound.
+        let webm = serde_json::json!({
+            "streams": [{"codec_type": "video", "width": 640, "height": 360}],
+            "format": {"duration": "1", "bit_rate": "500000"}
+        });
+        assert_eq!(parse_probe(&webm).unwrap().video_bps, 5e5);
     }
 
     #[test]

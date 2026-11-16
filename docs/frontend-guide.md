@@ -188,6 +188,10 @@ messages always come. Anything not downloaded waits for
 `Command::FetchAttachment { message_id, index }`. `MessageChanged` follows
 when the file is ready.
 
+Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
+upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending
+meanwhile. Without ffmpeg the original goes.
+
 ## 9. Calls
 
 | You do | You get |

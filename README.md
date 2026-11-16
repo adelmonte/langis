@@ -34,8 +34,8 @@ Not checked yet:
   `scripts/screen-share-test.sh`, which runs it in a throwaway headless
   sway session. GNOME's and KDE's portals haven't been tried.
 
-Missing on Linux for now: re-encoding videos before sending (they go as
-they are).
+Videos are re-encoded smaller before sending, as Desktop does, when
+`ffmpeg` (with libx264) is installed; without it they go as they are.
 
 ## Crates
 
@@ -77,6 +77,10 @@ Rust 1.88 or newer, and:
 - PulseAudio headers (Arch: `libpulse`, Debian/Ubuntu: `libpulse-dev`)
 - PipeWire headers, for screen sharing (Arch: `libpipewire`,
   Debian/Ubuntu: `libpipewire-0.3-dev`)
+
+At run time, optionally: `ffmpeg` to shrink videos before sending, and an
+XDG desktop portal with ScreenCast (most desktops have one) to share the
+screen in calls.
 
 The first build downloads Signal's prebuilt WebRTC (about 28 MB) into
 `target/webrtc`, and takes a few minutes.
