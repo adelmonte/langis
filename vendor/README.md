@@ -101,6 +101,12 @@ Changes:
   key, and others hold attachment, sticker, call-link and profile keys and
   message text. Changed by Langis.
 
+- `src/manager/registered.rs`: `Manager::send_story_with_sender_key` takes
+  the group's send endorsements, and a group story's sender key
+  distribution message to a member we have no profile key for goes sealed
+  with a one-member `Group-Send-Token`, as group messages do. It went
+  identified, telling the server who sent it. Changed by Langis.
+
 ## libsignal-service
 
 whisperfish/libsignal-service-rs at `7a7526741dfd9ad4c4894717f22651eb0506fb7e`
@@ -208,3 +214,11 @@ this revision on 2026-11-05. Changes:
   Upstream times keepalives with tokio's clock, which stops while the
   machine sleeps, so a socket that died meanwhile went unnoticed for
   minutes after waking.
+- `src/session_store.rs`, `src/sender.rs`, `src/sender/sender_key.rs`:
+  a device the server calls stale (410) or extra (409) has its active
+  session archived (`archive_device_session`), not its whole record
+  deleted, as Desktop's `handle409Response` and `handle410Response` do:
+  messages already on their way from it still decrypt. Changed by Langis.
+- `Cargo.toml`: upstream's dev-dependencies (less `clap`, for the examples
+  that aren't vendored) and uuid's `v4` feature, so the crate's tests run
+  as a workspace member (`cargo test --workspace`). Changed by Langis.

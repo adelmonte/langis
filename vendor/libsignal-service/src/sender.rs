@@ -969,15 +969,14 @@ where
                     tracing::debug!("{:?}", m);
                     for extra_device_id in &m.extra_devices {
                         tracing::debug!(
-                            "dropping session with device {}",
+                            "archiving session with device {}",
                             extra_device_id
                         );
-                        self.protocol_store
-                            .delete_service_addr_device_session(
-                                &recipient
-                                    .to_protocol_address(*extra_device_id)?,
-                            )
-                            .await?;
+                        crate::session_store::archive_device_session(
+                            &mut self.protocol_store,
+                            &recipient.to_protocol_address(*extra_device_id)?,
+                        )
+                        .await?;
                     }
 
                     for missing_device_id in &m.missing_devices {
@@ -1017,15 +1016,14 @@ where
                     tracing::debug!("{:?}", m);
                     for extra_device_id in &m.stale_devices {
                         tracing::debug!(
-                            "dropping session with device {}",
+                            "archiving session with device {}",
                             extra_device_id
                         );
-                        self.protocol_store
-                            .delete_service_addr_device_session(
-                                &recipient
-                                    .to_protocol_address(*extra_device_id)?,
-                            )
-                            .await?;
+                        crate::session_store::archive_device_session(
+                            &mut self.protocol_store,
+                            &recipient.to_protocol_address(*extra_device_id)?,
+                        )
+                        .await?;
                     }
                 },
                 Err(ServiceError::ProofRequiredError(ref p)) => {

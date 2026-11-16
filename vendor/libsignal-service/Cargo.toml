@@ -44,7 +44,7 @@ serde_json = "1.0.85"
 sha2 = "0.11"
 thiserror = "2.0"
 url = { version = "2.1", features = ["serde"] }
-uuid = { version = "1", features = ["serde"] }
+uuid = { version = "1", features = ["serde", "v4"] }
 
 # http
 reqwest = { version = "0.13", default-features = false, features = [
@@ -63,6 +63,14 @@ tokio = { version = "1.0", features = ["macros"] }
 
 [build-dependencies]
 prost-build = "0.14"
+
+[dev-dependencies]
+# Upstream's, less clap (its examples aren't vendored), so the unit tests
+# (the sender key loop's among them) run: `cargo test -p libsignal-service`.
+regex = "1"
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["macros", "rt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 default = ["cdsi"]

@@ -628,12 +628,11 @@ where
         devices: &[DeviceId],
     ) -> Result<(), MessageSenderError> {
         for device in devices {
-            self.sender
-                .protocol_store
-                .delete_service_addr_device_session(
-                    &recipient.to_protocol_address(*device),
-                )
-                .await?;
+            crate::session_store::archive_device_session(
+                &mut self.sender.protocol_store,
+                &recipient.to_protocol_address(*device),
+            )
+            .await?;
         }
         Ok(())
     }
