@@ -1587,6 +1587,7 @@ impl<S: Store> Manager<S, Registered> {
         timestamp: u64,
         info: &mut SenderKeyInfo,
         group: Option<&[u8]>,
+        endorsements: Option<&GroupSendEndorsements>,
     ) -> Result<Result<SenderKeyOutcome, MessageSenderError>, Error<S::Error>> {
         let mut sender = self.new_message_sender().await?;
         let mut content_body: ContentBody = message.into();
@@ -1602,25 +1603,40 @@ impl<S: Store> Manager<S, Registered> {
             ))),
             None => None,
         };
-        // A group story's distribution messages go as ordinary messages.
-        let mut with_access = Vec::with_capacity(recipients.len());
-        for recipient in recipients {
-            let access = match group {
-                Some(_) => self.store.profile_key(recipient).await?.map(|profile_key| {
-                    UnidentifiedAccess {
-                        key: profile_key.derive_access_key().to_vec(),
-                        certificate: sender_certificate.clone(),
-                        group_send_token: None,
-                    }
-                }),
-                None => None,
-            };
-            with_access.push((*recipient, access));
-        }
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_millis() as u64;
+        let our_aci = self.state.data.service_ids.aci();
+        // A group story's distribution messages go as ordinary messages:
+        // sealed with the member's access key, or (Langis) with a
+        // one-member Group-Send-Token when we have no profile key for
+        // them, as group messages do. Without either they'd go
+        // identified, telling the server who sent them.
+        let mut with_access = Vec::with_capacity(recipients.len());
+        for recipient in recipients {
+            let access = match &group_secret_params {
+                Some(params) => match self.store.profile_key(recipient).await? {
+                    Some(profile_key) => Some(UnidentifiedAccess {
+                        key: profile_key.derive_access_key().to_vec(),
+                        certificate: sender_certificate.clone(),
+                        group_send_token: None,
+                    }),
+                    None => endorsements
+                        .filter(|e| e.has_member(recipient))
+                        .and_then(|e| {
+                            e.build_token(&HashSet::from([*recipient]), our_aci, params, now_ms / 1000).ok()
+                        })
+                        .map(|token| UnidentifiedAccess {
+                            key: Vec::new(),
+                            certificate: sender_certificate.clone(),
+                            group_send_token: Some(token),
+                        }),
+                },
+                None => None,
+            };
+            with_access.push((*recipient, access));
+        }
         Ok(sender
             .send_story_with_sender_key(
                 &with_access,

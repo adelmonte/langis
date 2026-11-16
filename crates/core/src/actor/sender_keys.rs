@@ -174,8 +174,14 @@ impl Actor {
         }
         let service_ids: Vec<ServiceId> = ids.iter().map(|(id, _)| *id).collect();
         let mut info = self.sender_key_info(target).await;
+        // A group story's distribution messages need the group's
+        // endorsements for members we have no profile key for.
+        let endorsements = match group.as_deref() {
+            Some(key) => self.group_endorsements(manager, &ConversationId::group(key), key).await,
+            None => None,
+        };
         let result = manager
-            .send_story_with_sender_key(&service_ids, body.clone(), timestamp, &mut info, group.as_deref())
+            .send_story_with_sender_key(&service_ids, body.clone(), timestamp, &mut info, group.as_deref(), endorsements.as_ref())
             .await;
         self.save_sender_key_info(target, &info).await;
         let plan = match result {
