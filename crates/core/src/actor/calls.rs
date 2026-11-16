@@ -116,8 +116,12 @@ impl Actor {
     /// Desktop's "Present": opens the desktop's picker. The call changes
     /// once something is picked (`share_started`).
     pub(super) fn start_sharing(&self, source: String) {
-        let group = self.group_sharing().is_some();
-        if !group && self.call.borrow().as_ref().is_none_or(|c| !matches!(c.status, CallStatus::Connected { .. })) {
+        let group = self.group_sharing();
+        if group.is_some_and(|(sharing, _)| sharing) || self.call.borrow().as_ref().is_some_and(|c| c.sharing) {
+            // Already presenting: the desktop's indicator or StopSharing ends it first.
+            return;
+        }
+        if group.is_none() && self.call.borrow().as_ref().is_none_or(|c| !matches!(c.status, CallStatus::Connected { .. })) {
             return;
         }
         let mut result = Ok(());

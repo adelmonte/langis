@@ -9,9 +9,10 @@
 //! RingRTC's video source and the self-view.
 //!
 //! A share runs on its own thread, from the portal's dialog to the end of
-//! the stream. It tells the caller when it really started (the user picked
-//! something) and when it ended on its own (the user cancelled, stopped it
-//! from the desktop's indicator, or the window closed).
+//! the stream. It tells the caller when it really started (the first frame
+//! went out) and when it ended on its own (stopped from the desktop's
+//! indicator, the window closed, or a failure). A cancelled picker ends it
+//! quietly.
 
 use std::cell::RefCell;
 use std::os::fd::OwnedFd;
@@ -111,7 +112,7 @@ const REPEAT: Duration = Duration::from_secs(1);
 /// What a share tells its starter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShareEvent {
-    /// The user picked something and frames are on the way.
+    /// The user picked something and its first frame went out.
     Started,
     /// It ended without being stopped: cancelled in the picker or from
     /// the desktop (`None`), or failed.
@@ -122,8 +123,8 @@ pub enum ShareEvent {
 pub fn sources() -> anyhow::Result<Vec<ShareSource>> {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     let available = runtime.block_on(async {
-        let proxy = Screencast::new().await?;
-        proxy.available_source_types().await
+        let proxy = connect().await?;
+        anyhow::Ok(proxy.available_source_types().await?)
     });
     match available {
         Ok(types) if types.intersects(SourceType::MONITOR | SourceType::WINDOW) => Ok(vec![ShareSource {
@@ -187,7 +188,16 @@ impl Share {
         let thread = std::thread::Builder::new()
             .name("screen-share".into())
             .spawn(move || {
-                let result = run(&thread_shared, cancelled, sink, &events);
+                let events = Rc::new(events);
+                let started: Box<dyn FnOnce()> = Box::new({
+                    let (shared, events) = (thread_shared.clone(), events.clone());
+                    move || {
+                        if !shared.stop.lock().unwrap().stopped {
+                            events(ShareEvent::Started);
+                        }
+                    }
+                });
+                let result = run(&thread_shared, cancelled, sink, started);
                 if thread_shared.stop.lock().unwrap().stopped {
                     return;
                 }
@@ -228,48 +238,83 @@ impl Drop for Share {
     }
 }
 
-/// The share, start to end. `Ok` when it ended without an error.
+/// A ScreenCast proxy on a D-Bus connection of its own. ashpd's shared
+/// connection would belong to the first runtime that made it, and each
+/// share's runtime goes when the share does; this one closes with it, so
+/// the portal sees us leave.
+async fn connect() -> anyhow::Result<Screencast> {
+    let connection = ashpd::zbus::Connection::session().await.context("no D-Bus session")?;
+    Screencast::with_connection(connection).await.context("the desktop has no ScreenCast portal")
+}
+
+/// How long to wait for the portal to close a session at the end.
+const CLOSE_WAIT: Duration = Duration::from_secs(1);
+
+/// The share, start to end. `Ok` when it ended without an error: stopped,
+/// cancelled in the picker, or ended by the desktop.
 fn run(
     shared: &Arc<Shared>,
     cancelled: tokio::sync::oneshot::Receiver<()>,
     sink: Sink,
-    events: &dyn Fn(ShareEvent),
+    started: Box<dyn FnOnce()>,
 ) -> anyhow::Result<()> {
-    // Kept until the stream ends: zbus answers the portal on it, and
-    // the session lives as long as the connection does.
+    // Kept until the stream ends: the session lives on its connection,
+    // and a task on it watches for the desktop closing the session.
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build()?;
+    let (proxy, session) = runtime.block_on(async {
+        let proxy = connect().await?;
+        let session = Arc::new(proxy.create_session(Default::default()).await?);
+        anyhow::Ok((proxy, session))
+    })?;
     let picked = runtime.block_on(async {
         tokio::select! {
-            picked = open_portal() => picked.map(Some),
-            _ = cancelled => Ok(None),
+            picked = pick(&proxy, &session) => Some(picked),
+            _ = cancelled => None,
         }
-    })?;
-    let Some((proxy, session, node, fd)) = picked else { return Ok(()) };
-    if shared.stop.lock().unwrap().stopped {
-        return Ok(());
-    }
-    let result = stream(shared, node, fd, sink, events);
-    let _ = runtime.block_on(async {
-        let _ = session.close().await;
-        drop(proxy);
     });
+    let result = match picked {
+        // Stopped while the picker was open.
+        None => Ok(()),
+        Some(Err(error)) if error.is::<Cancelled>() => Ok(()),
+        Some(Err(error)) => Err(error),
+        Some(Ok(_)) if shared.stop.lock().unwrap().stopped => Ok(()),
+        Some(Ok((node, fd))) => {
+            // The desktop ending the share (its indicator, the window
+            // closed) closes the session.
+            let (closed_sender, closed) = pw::channel::channel::<()>();
+            let watched = session.clone();
+            let watcher = runtime.spawn(async move {
+                use futures_util::StreamExt as _;
+                let Ok(mut signal) = watched.receive_closed().await else { return };
+                if signal.next().await.is_some() {
+                    let _ = closed_sender.send(());
+                }
+            });
+            let result = stream(shared, node, fd, sink, started, closed);
+            watcher.abort();
+            result
+        }
+    };
+    // Always closed (it also closes a picker still open), but never waited
+    // on for long: dropping a share waits for this thread.
+    runtime.block_on(async {
+        let _ = tokio::time::timeout(CLOSE_WAIT, session.close()).await;
+    });
+    drop((session, proxy));
+    runtime.shutdown_timeout(Duration::from_millis(100));
     result
 }
 
-type Picked = (Screencast, ashpd::desktop::Session<Screencast>, u32, OwnedFd);
-
-/// The portal's dialog: `Ok(None)`-like cancels come back as an error
-/// `run` turns into a quiet end.
-async fn open_portal() -> anyhow::Result<Picked> {
-    let proxy = Screencast::new().await.context("the desktop has no ScreenCast portal")?;
+/// The portal's dialog, then the stream of what was picked. A cancelled
+/// picker is a [`Cancelled`] error.
+async fn pick(proxy: &Screencast, session: &ashpd::desktop::Session<Screencast>) -> anyhow::Result<(u32, OwnedFd)> {
     let types = proxy.available_source_types().await.unwrap_or(SourceType::MONITOR);
     let cursors = proxy.available_cursor_modes().await.unwrap_or(CursorMode::HIDDEN);
     // The pointer drawn into the picture, as Desktop shares it.
     let cursor = if cursors.contains(CursorMode::EMBEDDED) { CursorMode::EMBEDDED } else { CursorMode::HIDDEN };
-    let session = proxy.create_session(Default::default()).await?;
     proxy
         .select_sources(
-            &session,
+            session,
             SelectSourcesOptions::default()
                 .set_cursor_mode(cursor)
                 .set_sources(types & (SourceType::MONITOR | SourceType::WINDOW))
@@ -277,14 +322,14 @@ async fn open_portal() -> anyhow::Result<Picked> {
                 .set_persist_mode(PersistMode::DoNot),
         )
         .await?;
-    let response = match proxy.start(&session, None, Default::default()).await?.response() {
+    let response = match proxy.start(session, None, Default::default()).await?.response() {
         Ok(response) => response,
         Err(ashpd::Error::Response(ashpd::desktop::ResponseError::Cancelled)) => return Err(Cancelled.into()),
         Err(error) => return Err(error.into()),
     };
     let node = response.streams().first().ok_or_else(|| anyhow!("nothing was picked"))?.pipe_wire_node_id();
-    let fd = proxy.open_pipe_wire_remote(&session, Default::default()).await?;
-    Ok((proxy, session, node, fd))
+    let fd = proxy.open_pipe_wire_remote(session, Default::default()).await?;
+    Ok((node, fd))
 }
 
 /// The user closed the picker without sharing.
@@ -335,6 +380,8 @@ struct Pipeline {
     /// The last frame sent (RGBA, its size), to repeat.
     last: Option<(u32, u32, Vec<u8>)>,
     resizer: fast_image_resize::Resizer,
+    /// Told when the first frame goes out.
+    started: Option<Box<dyn FnOnce()>>,
 }
 
 impl Pipeline {
@@ -364,6 +411,9 @@ impl Pipeline {
             }
         };
         self.push(width, height, rgba, now);
+        if let Some(started) = self.started.take() {
+            started();
+        }
     }
 
     fn scale(&mut self, rgba: Vec<u8>, from: (u32, u32), to: (u32, u32)) -> Option<Vec<u8>> {
@@ -399,7 +449,8 @@ fn stream(
     node: u32,
     fd: OwnedFd,
     sink: Sink,
-    events: &dyn Fn(ShareEvent),
+    started: Box<dyn FnOnce()>,
+    closed: pw::channel::Receiver<()>,
 ) -> anyhow::Result<()> {
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None).context("starting PipeWire")?;
@@ -428,9 +479,19 @@ fn stream(
         last_push: None,
         last: None,
         resizer: fast_image_resize::Resizer::new(),
+        started: Some(started),
     }));
+    // The desktop closed the session: a normal end, whatever the stream says.
+    let ended_by_desktop = Rc::new(std::cell::Cell::new(false));
+    let _closed = closed.attach(mainloop.loop_(), {
+        let (mainloop, ended) = (mainloop.clone(), ended_by_desktop.clone());
+        move |()| {
+            ended.set(true);
+            mainloop.quit();
+        }
+    });
     let failure: Rc<RefCell<Option<String>>> = Rc::default();
-    let started = Rc::new(RefCell::new(false));
+    let streaming = Rc::new(RefCell::new(false));
 
     let stream = pw::stream::StreamBox::new(
         &core,
@@ -446,10 +507,10 @@ fn stream(
         .state_changed({
             let mainloop = mainloop.clone();
             let failure = failure.clone();
-            let started = started.clone();
+            let streaming = streaming.clone();
             move |_, _, _, new| match new {
                 pw::stream::StreamState::Streaming => {
-                    if !std::mem::replace(&mut *started.borrow_mut(), true) {
+                    if !std::mem::replace(&mut *streaming.borrow_mut(), true) {
                         tracing::info!("screen share streaming");
                     }
                 }
@@ -508,14 +569,12 @@ fn stream(
     });
     let _ = timer.update_timer(Some(Duration::from_millis(250)), Some(Duration::from_millis(250)));
 
-    // The user picked something: it has started, as far as the call goes.
-    events(ShareEvent::Started);
 
     mainloop.run();
     let _ = stream.disconnect();
     match failure.borrow_mut().take() {
-        Some(error) => Err(anyhow!("the shared stream failed: {error}")),
-        None => Ok(()),
+        Some(error) if !ended_by_desktop.get() => Err(anyhow!("the shared stream failed: {error}")),
+        _ => Ok(()),
     }
 }
 
@@ -627,11 +686,48 @@ mod tests {
     use super::*;
 
     /// The whole path on a real desktop: the portal's picker, then frames
-    /// from PipeWire. Needs a session with a ScreenCast portal that picks
-    /// without asking (xdg-desktop-portal-wlr with `chooser_type=none`, say).
+    /// from PipeWire; twice, around asking what there is to share (each
+    /// on a runtime of its own, as in the app). Needs a session with a
+    /// ScreenCast portal that picks without asking: see
+    /// scripts/screen-share-test.sh.
     #[test]
     #[ignore = "needs a desktop session with a ScreenCast portal"]
     fn a_share_delivers_frames_from_the_portal() {
+        assert_eq!(sources().unwrap().len(), 1, "the portal answers");
+        share_once();
+        share_once();
+        assert_eq!(sources().unwrap().len(), 1, "and still answers");
+    }
+
+    /// The desktop ending a share (here: its screen unplugged) ends it
+    /// without an error. Run by scripts/screen-share-test.sh, after the
+    /// test above (it takes the sway output away).
+    #[test]
+    #[ignore = "needs the headless sway session of scripts/screen-share-test.sh"]
+    fn a_share_the_desktop_ends_stops_quietly() {
+        let shared = Arc::new(Shared { quality: Mutex::new(ShareQuality::default()), stop: Mutex::default() });
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        shared.stop.lock().unwrap().portal = Some(cancel);
+        let (events_tx, events_rx) = std::sync::mpsc::channel();
+        let thread_shared = shared.clone();
+        let thread = std::thread::spawn(move || {
+            let started: Box<dyn FnOnce()> = Box::new(move || {
+                let _ = events_tx.send(ShareEvent::Started);
+            });
+            run(&thread_shared, cancelled, Box::new(|_, _, _: &[u8]| {}), started)
+        });
+        assert_eq!(events_rx.recv_timeout(Duration::from_secs(20)).unwrap(), ShareEvent::Started);
+        let unplugged = std::process::Command::new("swaymsg").args(["output", "HEADLESS-1", "disable"]).status().unwrap();
+        assert!(unplugged.success());
+        let begun = Instant::now();
+        while !thread.is_finished() {
+            assert!(begun.elapsed() < Duration::from_secs(10), "the share didn't notice it ended");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        thread.join().unwrap().expect("ended without an error");
+    }
+
+    fn share_once() {
         let (tx, rx) = std::sync::mpsc::channel();
         let (events_tx, events_rx) = std::sync::mpsc::channel();
         let shared = Arc::new(Shared {
@@ -645,10 +741,10 @@ mod tests {
         });
         let thread_shared = shared.clone();
         let thread = std::thread::spawn(move || {
-            let events = move |e| {
-                let _ = events_tx.send(e);
-            };
-            run(&thread_shared, cancelled, sink, &events)
+            let started: Box<dyn FnOnce()> = Box::new(move || {
+                let _ = events_tx.send(ShareEvent::Started);
+            });
+            run(&thread_shared, cancelled, sink, started)
         });
         match events_rx.recv_timeout(Duration::from_secs(20)) {
             Ok(event) => assert_eq!(event, ShareEvent::Started),
@@ -663,12 +759,14 @@ mod tests {
             assert_eq!(*len, (*w * *h * 4) as usize);
         }
         eprintln!("frames: {frames:?}");
-        // Stopping ends the stream's loop.
+        // Stopping ends the stream's loop, and the session is closed.
         let mut stop = shared.stop.lock().unwrap();
         stop.stopped = true;
         let _ = stop.stream.take().unwrap().send(());
         drop(stop);
+        let started = Instant::now();
         thread.join().unwrap().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(3), "stopping took {:?}", started.elapsed());
     }
 
     #[test]

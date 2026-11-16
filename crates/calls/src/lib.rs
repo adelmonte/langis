@@ -841,11 +841,14 @@ impl Calls {
 
     /// Desktop's "Present": opens the desktop's picker. Nothing changes
     /// until the user picks something ([`CallEvent::Share`] with
-    /// [`ShareEvent::Started`]; then [`Calls::share_started`]). A share
-    /// already starting or running is stopped first.
+    /// [`ShareEvent::Started`]; then [`Calls::share_started`]). While
+    /// already presenting it does nothing; a picker already open is
+    /// replaced (nothing had changed for it yet).
     pub fn start_sharing(&mut self, source: &str) -> anyhow::Result<()> {
-        let camera = self.camera.is_some();
-        self.stop_sharing(camera);
+        if self.share_live {
+            return Ok(());
+        }
+        self.share = None;
         self.share_id += 1;
         let (emit, share) = (self.emit.clone(), self.share_id);
         let events = move |event| emit(CallEvent::Share { share, event });

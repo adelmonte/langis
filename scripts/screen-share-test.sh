@@ -56,4 +56,5 @@ sleep 2
     done
 done) &
 
-"$LANGIS_SHARE_TEST" --ignored --nocapture a_share_delivers_frames_from_the_portal
+"$LANGIS_SHARE_TEST" --ignored --nocapture --exact screen::tests::a_share_delivers_frames_from_the_portal
+"$LANGIS_SHARE_TEST" --ignored --nocapture --exact screen::tests::a_share_the_desktop_ends_stops_quietly

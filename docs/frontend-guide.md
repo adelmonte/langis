@@ -220,8 +220,9 @@ picker for the screen or window. The flow:
    source, `langis_core::PORTAL_SOURCE`, when the desktop has a ScreenCast
    portal, and an empty list when it doesn't (hide the Present button).
 2. `Command::StartSharing { source }` opens the desktop's picker. Nothing
-   changes in the call yet.
-3. When the user picks something, the call update has `sharing: true` and
+   changes in the call yet. While already presenting it's ignored.
+3. When the user picks something and its first frame goes out (the
+   screen has to change once), the call update has `sharing: true` and
    the share replaces the camera. `call_video().local` shows what's being
    sent. If they cancel, nothing happens; no event.
 4. `Command::StopSharing` stops it (or closes the picker). If the desktop
