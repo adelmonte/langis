@@ -16,16 +16,19 @@ targets Linux.
 
 Early. What has been checked so far, on Linux:
 
-- The workspace builds, and its 450+ tests pass (`cargo test --workspace`).
+- The workspace builds, and its 500+ tests pass (`cargo test --workspace`),
+  the vendored libraries' own included.
 - The demo backend runs end to end: `cargo run -p langis-core --example demo_frontend`.
+- A code review for security (November 2026) of the core, the calls code,
+  Storage Service sync, key transparency and every vendored change. Its
+  findings are fixed; see `git log`. It was a code reading by AI reviewers,
+  not a professional audit.
 
 Not checked yet:
 
 - Linking a real phone, or anything else against Signal's servers from Linux.
 - Calls on Linux (audio goes through WebRTC's PulseAudio support, which
   PipeWire also serves; the camera through V4L2).
-- An independent security review of the core and of the changes to the
-  vendored Signal libraries (`vendor/README.md` lists them).
 
 Missing on Linux for now: screen sharing in calls (needs the XDG ScreenCast
 portal) and re-encoding videos before sending (they go as they are).
