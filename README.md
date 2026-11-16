@@ -1,74 +1,83 @@
-# Vernam
+# Langis
 
-An unofficial native Signal client, built with Rust and [GPUI](https://gpui-kit.com). It links to your phone as a secondary device, the way Signal Desktop does. It's named after Gilbert Vernam, whose 1917 teleprinter cipher, given a random key used only once, became the one-time pad, which Claude Shannon proved unbreakable in 1949. It was called Signal GPUI, then briefly Ziggy, until October 2026; the first launch under the new name moves that app's data over.
+A Signal client library in Rust, with no UI. Langis does the Signal side
+(linking, sending, receiving, groups, attachments, calls, sync with your
+other devices) and stores everything in an encrypted database. You bring the
+interface: egui, GTK, Qt, a TUI, a bot, whatever you like.
 
-![Vernam in demo mode: the chat list and a group chat](docs/screenshot.png)
+It links to your phone as a secondary device, the way Signal Desktop does.
+It is unofficial and not affiliated with Signal.
 
-## A fraction of the memory
+Langis is a fork of [Vernam](https://github.com/knpwrs/vernam), a native
+Signal client for macOS. It keeps Vernam's backend, drops the macOS app, and
+targets Linux.
 
-Signal Desktop is an Electron app: a main process, a renderer and four helpers. Vernam is one native process. In an Activity Monitor spot check (Memory column, same account, both apps open), Vernam used 121 MB, about 12% of the 1,038 MB that Signal Desktop's six processes used.
+## Status
 
-It stays small as you use it:
+Early. What has been checked so far, on Linux:
 
-- The timeline and chat list only lay out and draw the rows on screen.
-- A chat loads 60 messages at a time as you scroll back, and drops them when you switch chats.
-- Decoded photos live in a per-chat cache with a 256 MB budget, freed when you switch. GPUI's default would keep every decoded image until the app quits.
-- Looping GIFs share a 256 MB budget of their own.
+- The workspace builds, and its 450+ tests pass (`cargo test --workspace`).
+- The demo backend runs end to end: `cargo run -p langis-core --example demo_frontend`.
 
-## Feature parity with Signal Desktop
+Not checked yet:
 
-The goal is to do what Signal Desktop does, the way it does it. When behavior is in question, the answer comes from reading Desktop's source, and the code cites the file it follows. That covers the everyday things (messages, replies, reactions, edits, deletes, mentions, formatting, stickers, GIFs, link previews, voice messages, disappearing messages, pins, groups) and the less visible ones:
+- Linking a real phone, or anything else against Signal's servers from Linux.
+- Calls on Linux (audio goes through WebRTC's PulseAudio support, which
+  PipeWire also serves; the camera through V4L2).
+- An independent security review of the core and of the changes to the
+  vendored Signal libraries (`vendor/README.md` lists them).
 
-- **Voice and video calls**, 1:1 and in groups, with screen sharing, through RingRTC, the calling library Desktop uses.
-- **Stories**: viewing, posting text, photo and video stories, replies, and story privacy from your phone.
-- **Message history when linking**: like Desktop's "link and sync", your phone sends your history, which is downloaded, decrypted and imported.
-- **Sync with your other devices**: pins, archived, muted and unread chats, blocks, hidden stories and settings go through Signal's Storage Service, editing only the fields that changed and keeping the ones this client doesn't know.
+Missing on Linux for now: screen sharing in calls (needs the XDG ScreenCast
+portal) and re-encoding videos before sending (they go as they are).
 
-Where Signal's server turns features on or sets limits through remote config, this client reads the same config and follows it as Desktop 8.34 would. `todo.md` lists what's left.
+## Crates
 
-## Beyond Signal Desktop
+| Crate | What it does |
+|---|---|
+| `langis-core` | The backend a frontend drives: `Backend::start`, `Command`s in, `Event`s out. |
+| `langis-store` | The encrypted app database (`AppDb`) a frontend reads chats and messages from. |
+| `langis-calls` | Calls through Signal's RingRTC. Used by the core; frontends only see its video frames. |
+| `langis-emoji` | Emoji data and search, for frontends that want a picker. |
+| `vendor/` | Modified copies of presage and libsignal-service-rs. |
 
-- **Several accounts at once.** Signal Desktop links one account. Here, File → Add Account… links another, each as its own linked device with its own encrypted database and Keychain key. All of them stay connected: messages, notifications and calls arrive for every account, and the Dock's badge counts every account's unread chats. With two or more, the tabs' rail lists them with their unread counts, and Ctrl-Cmd-1 to 9 switch between them. While one account is in a call, calls to the others are answered "busy", as Signal does during a call. Unlinking an account removes it and its data when there are others. Each account runs its own backend thread, so each adds to the memory figures above, which are for one.
-- **Lossless image optimization.** Signal Desktop redraws every image except GIFs, and past 0.2 MiB sends it as a JPEG at quality 0.7 scaled to at most 1600 pixels (`ts/util/scaleImageToLevel`). Here, images are shrunk without changing a pixel: PNG with [oxipng](https://github.com/shssoichiro/oxipng) at its maximum preset, JPEG with mozjpeg's lossless transcode, location metadata removed, colour profile and rotation kept. TIFF and BMP, which macOS often puts on the clipboard, become PNG losslessly.
-- **Reply from a notification.** Notifications have a reply field and Mark as Read. Desktop's only open the chat.
-- **Emoji search that tolerates typos.** An [`fst`](https://docs.rs/fst) index over names, keywords and shortcodes answers in 2 to 45 µs, matches words in any order, allows one typo (`smlie`), and ranks by your own use.
-- **Developer conveniences.** An offline demo mode, separate profiles, and opening without taking focus (see Running).
+## Writing a frontend
 
-## How it's built
+Start with [docs/frontend-guide.md](docs/frontend-guide.md), then read
+[crates/core/examples/demo_frontend.rs](crates/core/examples/demo_frontend.rs).
+The full API reference is `cargo doc -p langis-core -p langis-store --open`.
 
-| Crate | Role |
-| --- | --- |
-| `crates/app` | The GPUI interface |
-| `crates/backend` | Signal networking on its own Tokio thread, through [presage](https://github.com/whisperfish/presage), libsignal-service-rs and [libsignal](https://github.com/signalapp/libsignal). The interface talks to it with commands and events |
-| `crates/store` | The app's SQLCipher database: chats, messages, full-text search, stories, settings |
-| `crates/calls` | Calls, on RingRTC with Signal's prebuilt WebRTC |
-| `crates/emoji` | The emoji table and search index, generated at build time from emojibase |
-| `vendor/` | presage and libsignal-service-rs with the changes this app needs, such as receiving and sending stories (`vendor/README.md`) |
+In short:
 
-## Running
-
-Building needs `cmake` (BoringSSL, for contact discovery) and `protoc` (RingRTC and libsignal's `spqr`), and GIFs and video posters need `ffmpeg`: `brew install cmake ffmpeg`, then `mise install` for the `protoc` pinned in `mise.toml`. mise's `protoc` is the upstream release binary; Homebrew's links Homebrew's abseil and stops starting when abseil upgrades ahead of it. The first build downloads Signal's prebuilt WebRTC (about 28 MB) into `target/webrtc`.
-
-```sh
-cargo run --release                                              # your account: scan the QR code with Signal on your phone
-SIGNAL_GPUI_DATA_DIR=/tmp/sg cargo run                           # a separate profile, its key in a file rather than the Keychain
-SIGNAL_GPUI_DEMO=1 SIGNAL_GPUI_DATA_DIR=/tmp/sg-demo cargo run   # made-up demo data; never connects to Signal
-SIGNAL_GPUI_BACKGROUND=1 …                                       # open without taking keyboard focus
+```rust
+let (backend, mut events) = Backend::start(config)?;     // starts its own threads
+backend.send(Command::Link);                              // ask for things
+while let Some(event) = events.next().await {             // hear back
+    match event {
+        Event::LinkUrl(url) => show_qr_code(url),
+        Event::ConversationsChanged => reload_chat_list(&backend),
+        _ => {}
+    }
+}
 ```
 
-Each account's data is in `accounts/<id>/` in the data directory, beside the app's logs and window position; the first launch of a build with accounts moves the one account's data there. The database key lives in the login keychain, and Keychain access depends on the app's code signature: unsigned builds ask for your password after every rebuild. A free "Apple Development" certificate from Xcode stops that, and `scripts/bundle.sh` signs with it. [docs/signing.md](docs/signing.md) has the steps.
+## Building
 
-macOS only shows notifications, and only grants camera and microphone access, to an app bundle. `cargo run` runs the app from `target/<profile>/Vernam.app`; for a build you start yourself, `scripts/bundle.sh` makes the bundle. `mise run bundle` does both: it builds release and makes `target/release/Vernam.app`.
+Rust 1.88 or newer, and:
 
-GIF search needs your own Giphy API key (free at developers.giphy.com), pasted in the GIFs tab or set as `GIPHY_API_KEY`. Signal Desktop's key belongs to Signal, so it isn't used here.
+- `protoc` (Arch: `protobuf`, Debian/Ubuntu: `protobuf-compiler`)
+- `clang` (for BoringSSL's bindings in libsignal)
+- `cmake`
+- PulseAudio headers (Arch: `libpulse`, Debian/Ubuntu: `libpulse-dev`)
 
-## Tests
+The first build downloads Signal's prebuilt WebRTC (about 28 MB) into
+`target/webrtc`, and takes a few minutes.
 
 ```sh
-cargo test --workspace        # store, mapping and backend tests, and headless GPUI tests against the demo
-cargo bench -p langis-emoji
+cargo test --workspace
+cargo run -p langis-core --example demo_frontend
 ```
 
 ## License
 
-AGPL-3.0-only (see `LICENSE`), as libsignal, libsignal-service-rs and presage require. Third-party notices are in `NOTICE`. This is an unofficial client, not affiliated with Signal.
+AGPL-3.0-only, like Signal's libraries it links. See LICENSE and NOTICE.
+A frontend that links Langis is under the AGPL too.
