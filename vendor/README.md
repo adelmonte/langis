@@ -107,6 +107,11 @@ Changes:
   with a one-member `Group-Send-Token`, as group messages do. It went
   identified, telling the server who sent it. Changed by Langis.
 
+- `src/manager/registered.rs`, `src/errors.rs`: `get_attachment` no longer
+  preallocates the sender's claimed size (a claimed terabyte aborted on
+  allocation) beyond 16 MiB, and stops a download past 1 GiB with the new
+  `Error::AttachmentTooLarge`. Changed by Langis.
+
 ## libsignal-service
 
 whisperfish/libsignal-service-rs at `7a7526741dfd9ad4c4894717f22651eb0506fb7e`

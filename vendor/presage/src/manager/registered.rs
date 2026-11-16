@@ -1718,14 +1718,22 @@ impl<S: Store> Manager<S, Registered> {
         let mut service = self.identified_push_service();
         let mut attachment_stream = service.get_attachment(attachment_pointer).await?;
 
-        let plaintext_len = attachment_pointer.size.and_then(|len| len.try_into().ok());
+        // Langis: the size is the sender's claim, so it only hints at the
+        // buffer (a claimed terabyte would abort on allocation), and the
+        // download stops at a hard cap far above Signal's attachment limit.
+        const MAX_CIPHERTEXT_BYTES: u64 = 1024 * 1024 * 1024;
+        const MAX_PREALLOCATED_BYTES: usize = 16 * 1024 * 1024;
+        let plaintext_len: Option<usize> = attachment_pointer.size.and_then(|len| len.try_into().ok());
 
         // We need the whole file for the crypto to check out
-        let mut ciphertext = Vec::with_capacity(plaintext_len.unwrap_or(0));
-        let size_bytes = attachment_stream
-            .stream
+        let mut ciphertext = Vec::with_capacity(plaintext_len.unwrap_or(0).min(MAX_PREALLOCATED_BYTES));
+        let size_bytes = (&mut attachment_stream.stream)
+            .take(MAX_CIPHERTEXT_BYTES + 1)
             .read_to_end(&mut ciphertext)
             .await?;
+        if size_bytes as u64 > MAX_CIPHERTEXT_BYTES {
+            return Err(Error::AttachmentTooLarge(MAX_CIPHERTEXT_BYTES));
+        }
         trace!(size_bytes, "downloaded encrypted attachment");
 
         let digest = sha2::Sha256::digest(&ciphertext);
