@@ -14,6 +14,10 @@
 use std::collections::HashMap;
 use std::io::Read as _;
 
+/// The most a transferred backup may hold once decompressed. It holds
+/// messages and settings, no media, so even long histories stay far below.
+const MAX_BACKUP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 use anyhow::{Context as _, anyhow, bail};
 use libsignal_message_backup::proto::backup as proto;
 use presage::libsignal_service::protocol::Aci;
@@ -171,8 +175,16 @@ pub(crate) fn decrypt(mut data: Vec<u8>, ephemeral_key: [u8; 32], aci: Aci) -> a
     }
     presage::libsignal_service::attachment_cipher::decrypt_in_place(combined, &mut data)
         .map_err(|e| anyhow!("can't decrypt the backup: {e:?}"))?;
+    // A transferred backup holds the whole history, so it can be large, but
+    // not unboundedly: a small gzip can claim gigabytes.
     let mut plain = Vec::new();
-    flate2::read::GzDecoder::new(data.as_slice()).read_to_end(&mut plain).context("decompressing the backup")?;
+    flate2::read::GzDecoder::new(data.as_slice())
+        .take(MAX_BACKUP_BYTES + 1)
+        .read_to_end(&mut plain)
+        .context("decompressing the backup")?;
+    if plain.len() as u64 > MAX_BACKUP_BYTES {
+        bail!("backup larger than {MAX_BACKUP_BYTES} bytes uncompressed");
+    }
     Ok(plain)
 }
 

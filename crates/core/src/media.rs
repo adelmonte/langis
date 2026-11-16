@@ -229,12 +229,21 @@ impl Optimization {
     }
 }
 
+/// The most pixels [`prepare`] takes. The optimizers allocate for the size
+/// a header claims before reading any pixels, so a small file claiming
+/// 100000x100000 asks for tens of gigabytes; past this it's refused rather
+/// than risk that. 120 MP is above what phones save by default.
+pub const MAX_PIXELS: u64 = 120_000_000;
+
 /// Optimizes `bytes` losslessly. CPU-heavy (seconds for large PNGs at
 /// `Max`): call it off the async runtime.
 pub fn prepare(bytes: &[u8], level: Optimization) -> anyhow::Result<PreparedImage> {
     let kind = ImageKind::sniff(bytes).context("not a PNG, JPEG, GIF or WebP image")?;
     let size = imagesize::blob_size(bytes).map_err(|e| anyhow!("can't read image size: {e}"))?;
     let (width, height) = (size.width as u32, size.height as u32);
+    if (size.width as u64).saturating_mul(size.height as u64) > MAX_PIXELS {
+        bail!("image too large ({width}x{height})");
+    }
     let (bytes, rotated) = match kind {
         ImageKind::Png => (optimize_png(bytes, level)?, false),
         ImageKind::Jpeg => {

@@ -22,6 +22,8 @@ const USER_AGENT: &str = "WhatsApp/2";
 const MAX_REDIRECTS: usize = 20;
 const MAX_HTML_BYTES: usize = 1000 * 1024;
 const MAX_IMAGE_BYTES: usize = 1024 * 1024;
+/// A preview image's pixels at most (Open Graph images are around 1200x630).
+const MAX_IMAGE_PIXELS: u64 = 16_000_000;
 const TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_HREF_LENGTH: usize = 4096;
 
@@ -198,6 +200,8 @@ pub(crate) fn tls_config() -> anyhow::Result<rustls::ClientConfig> {
 fn client() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .use_preconfigured_tls(tls_config()?)
+        // A proxy would resolve names itself, around `PublicOnly`.
+        .no_proxy()
         .dns_resolver(PublicOnly)
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(USER_AGENT)
@@ -370,6 +374,12 @@ async fn fetch_image(
     // Same lossless treatment as any image we send; icons become PNG.
     let prepared = tokio::task::spawn_blocking(move || -> anyhow::Result<media::PreparedImage> {
         let bytes = if bytes.starts_with(&[0, 0, 1, 0]) { ico_to_png(&bytes)? } else { media::normalize(bytes)? };
+        // A site picks these bytes: a header claiming a huge size would make
+        // the optimizer allocate for it. Previews are small; refuse big ones.
+        let size = imagesize::blob_size(&bytes).map_err(|e| anyhow!("can't read image size: {e}"))?;
+        if (size.width as u64).saturating_mul(size.height as u64) > MAX_IMAGE_PIXELS {
+            anyhow::bail!("preview image too large ({}x{})", size.width, size.height);
+        }
         media::prepare(&bytes, level)
     })
     .await
