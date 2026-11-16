@@ -356,6 +356,18 @@ impl http::Delegate for Handler {
     }
 }
 
+/// The largest remote frame shown, as (shorter side, longer side): 4K, a
+/// screen share's most. A sender picks the size, and each frame is copied
+/// twice at four bytes a pixel, so a huge one is dropped (as RingRTC's
+/// Desktop bindings drop "overlarge frames") rather than allocated.
+const MAX_FRAME: (u32, u32) = (2160, 4096);
+
+/// Whether a remote frame is within [`MAX_FRAME`], either way round.
+pub(crate) fn frame_fits(width: u32, height: u32) -> bool {
+    let (short, long) = if width <= height { (width, height) } else { (height, width) };
+    short <= MAX_FRAME.0 && long <= MAX_FRAME.1
+}
+
 /// Remote video into a [`FrameSlot`].
 #[derive(Clone)]
 struct RemoteSink(FrameSlot);
@@ -364,6 +376,9 @@ impl VideoSink for RemoteSink {
     fn on_video_frame(&self, _: ringrtc::lite::sfu::DemuxId, frame: VideoFrame) {
         // The frame's buffer is the decoder's: copy it out and let it go.
         let (width, height) = (frame.width(), frame.height());
+        if !frame_fits(width, height) {
+            return;
+        }
         let mut rgba = vec![0; width as usize * height as usize * 4];
         if frame.to_rgba(&mut rgba) {
             self.0.put_rgba(width, height, &rgba, false);
@@ -909,6 +924,15 @@ pub fn offer_age(server_timestamp_ms: u64, now_ms: u64) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn frames_up_to_4k_either_way_round_are_shown() {
+        assert!(super::frame_fits(1280, 720));
+        assert!(super::frame_fits(3840, 2160));
+        assert!(super::frame_fits(2160, 3840));
+        assert!(!super::frame_fits(4097, 100));
+        assert!(!super::frame_fits(100_000, 100_000));
+    }
+
     use super::*;
 
     #[test]

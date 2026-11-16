@@ -199,6 +199,9 @@ pub(crate) struct GroupSink(pub GroupFrames);
 impl VideoSink for GroupSink {
     fn on_video_frame(&self, demux_id: DemuxId, frame: VideoFrame) {
         let (width, height) = (frame.width(), frame.height());
+        if !crate::frame_fits(width, height) {
+            return;
+        }
         let mut rgba = vec![0; width as usize * height as usize * 4];
         if frame.to_rgba(&mut rgba) {
             self.0.slot(demux_id).put_rgba(width, height, &rgba, false);
