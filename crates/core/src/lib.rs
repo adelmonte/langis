@@ -1416,6 +1416,13 @@ impl Backend {
     pub fn start(config: Config) -> anyhow::Result<(Backend, mpsc::UnboundedReceiver<Event>)> {
         std::fs::create_dir_all(config.data_dir.join("attachments"))
             .with_context(|| format!("creating {}", config.data_dir.display()))?;
+        // Attachments, avatars, stickers and logs are stored decrypted under
+        // the data directory: only its owner may enter it, whatever the umask.
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&config.data_dir, std::fs::Permissions::from_mode(0o700))
+                .with_context(|| format!("making {} private", config.data_dir.display()))?;
+        }
 
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)

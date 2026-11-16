@@ -25,6 +25,12 @@ fn fresh_install_needs_linking() {
     assert!(dir.path().join("signal.db").exists());
     assert!(dir.path().join("app.db").exists());
     assert!(dir.path().join("attachments").is_dir());
+    // Decrypted files live here: only the owner may enter.
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
     // Both databases are SQLCipher-encrypted (no plaintext SQLite header).
     for file in ["signal.db", "app.db"] {
         let bytes = std::fs::read(dir.path().join(file)).unwrap();

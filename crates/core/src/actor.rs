@@ -5131,6 +5131,15 @@ impl Actor {
     ) -> DeliveryStatus {
         let only = self.resend_only.borrow_mut().remove(&message);
         let delivery = self.deliver_to(manager, conversation, body, timestamp, only.as_deref()).await;
+        // presage trusts a changed identity key when sending
+        // (`OnNewIdentity::Trust`), and the check that adds the "safety
+        // number changed" notice otherwise runs only when they message us.
+        // Run it for everyone this reached, so a key that changed on our send
+        // (a reinstall, or a re-registered account) is shown at once and a
+        // verified contact stops counting as verified.
+        for recipient in &delivery.reached {
+            self.check_identity(recipient).await;
+        }
         self.record_delivery(conversation, message, &delivery).await
     }
 
