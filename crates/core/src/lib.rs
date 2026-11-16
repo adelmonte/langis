@@ -29,6 +29,7 @@ pub mod usernames;
 pub mod media;
 pub mod link_preview;
 pub mod debug_log;
+pub mod keys;
 pub mod recipients;
 pub mod giphy;
 pub mod sticker_upload;

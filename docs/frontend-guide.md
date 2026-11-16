@@ -20,7 +20,7 @@ use langis_core::{Backend, Config};
 
 let config = Config {
     data_dir,              // e.g. ~/.local/share/<your-app>
-    db_key,                // 32 random bytes; see "The database key"
+    db_key,                // from keys::load_or_create; see "The database key"
     device_name: "My Langis app".into(),  // shown in the phone's Linked devices
     demo: false,           // true: made-up data, no network
     former_data_dirs: Vec::new(),
@@ -40,11 +40,25 @@ configs, so a call on one makes the others answer "busy".
 
 Both databases (`signal.db` with the protocol keys, `app.db` with your
 messages) are SQLCipher-encrypted with `db_key`. Whoever has the key and the
-files can read everything.
+files can read everything. `langis_core::keys` keeps it for you:
 
-Generate 32 random bytes on first run and keep them in the system keyring
-(the Secret Service API: GNOME Keyring, KWallet), not in a file next to the
-data. Losing the key means losing the local history; the phone keeps its own.
+```rust
+use langis_core::keys::{self, KeySource};
+
+let (db_key, kept_in) = keys::load_or_create(&data_dir, &KeySource::File)?;
+```
+
+| `KeySource` | Where the key is | Trade-off |
+|---|---|---|
+| `File` (default) | `database.key` in the data directory, mode 0600 | What Signal Desktop does without a keyring. Any program running as the user can read it. |
+| `Passphrase(p)` | Nowhere: derived with Argon2id each start | The user types it every launch. Forgotten means the local history is gone. |
+| `Keyring { service }` | The Secret Service (GNOME Keyring, KWallet, KeePassXC) | Needs the `keyring` cargo feature and a running keyring. |
+| `Auto { service }` | The keyring if one answers, else the file | What Signal Desktop does. Needs the `keyring` feature. |
+
+The choice is made when the data directory is first set up. Afterwards the
+key must come from the same place: `load_or_create` refuses to make a new
+key for databases that exist. Call it before `Backend::start`, outside any
+async runtime.
 
 ## 3. Linking
 

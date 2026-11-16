@@ -31,6 +31,10 @@ base64 = "0.22"
 # Group requests: the group's public params are bincode-encoded, then hex.
 bincode = "1.3"
 hex = "0.4"
+# The database key from a passphrase (keys.rs).
+argon2 = "0.5"
+# The database key in the Secret Service, with the `keyring` feature (keys.rs).
+keyring = { version = "3.6", optional = true, default-features = false, features = ["async-secret-service", "crypto-rust", "tokio"] }
 # Signal's libraries, all at the release presage's vendored
 # libsignal-service uses (Desktop 8.36 uses v0.106.0). RingRTC brings its
 # own older zkgroup and libsignal-core for call links.
@@ -80,6 +84,10 @@ imagesize = "0.15"
 # TIFF/BMP (what macOS often puts on the clipboard) become PNG before sending.
 # Quote thumbnails decode what was quoted (JPEG, WebP and GIF too).
 image = { version = "0.25", default-features = false, features = ["png", "tiff", "bmp", "ico", "jpeg", "webp", "gif"] }
+
+[features]
+# Keep the database key in the Secret Service (keys::KeySource::Keyring).
+keyring = ["dep:keyring"]
 
 [dev-dependencies]
 # libsignal's fixed-seed test rng, to check presentations against its vectors.

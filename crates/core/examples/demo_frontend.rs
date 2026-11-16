@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let config = Config {
         data_dir: dir.path().to_owned(),
-        // A real frontend keeps a random key in the system keyring.
+        // A real frontend gets this from `langis_core::keys::load_or_create`.
         db_key: [7; 32],
         device_name: "Langis demo".into(),
         demo: true,
