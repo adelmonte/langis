@@ -244,6 +244,7 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
         .await
         .context("authenticating with Storage Service")?;
     let manifest = storage.manifest().await.context("reading storage manifest")?;
+    accept_manifest(&manifest)?;
     let ikm = (!manifest.record_ikm.is_empty()).then_some(manifest.record_ikm.as_slice());
     let keys: Vec<Vec<u8>> = manifest
         .identifiers
@@ -1447,7 +1448,9 @@ impl Session {
     async fn manifest(&self) -> anyhow::Result<ManifestRecord> {
         let response = self.request(reqwest::Method::GET, "/v1/storage/manifest")?.send().await?.error_for_status()?;
         let manifest = StorageManifest::decode(response.bytes().await?)?;
-        Ok(StorageService::decrypt_manifest(&self.key, &manifest)?)
+        let manifest = StorageService::decrypt_manifest(&self.key, &manifest)?;
+        accept_manifest(&manifest)?;
+        Ok(manifest)
     }
 
     /// The decrypted, still-encoded `StorageRecord` stored under `key`.
@@ -1462,6 +1465,8 @@ impl Session {
     }
 
     /// `(key, decrypted StorageRecord)` for each of `keys` the server has.
+    /// Items under keys we didn't ask for are dropped: an old item is still
+    /// authentic, so a server could pass one off as the current record.
     async fn read_many(&self, keys: &[Vec<u8>], ikm: Option<&[u8]>) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let body = ReadOperation { read_key: keys.to_vec() }.encode_to_vec();
         let response = self.request(reqwest::Method::PUT, "/v1/storage/read")?.body(body).send().await?.error_for_status()?;
@@ -1469,6 +1474,7 @@ impl Session {
         items
             .items
             .into_iter()
+            .filter(|item| keys.contains(&item.key))
             .map(|item| {
                 let record = decrypt(&item_key(&self.key, &item.key, ikm), &item.value)?;
                 Ok((item.key, record))
@@ -1498,7 +1504,11 @@ impl Session {
             delete_key: old_key.map(|k| vec![k.to_vec()]).unwrap_or_default(),
             clear_all: false,
         };
-        self.write(&write).await
+        let written = self.write(&write).await?;
+        if written {
+            remember_manifest_version(next.version);
+        }
+        Ok(written)
     }
 
     /// `Ok(false)` on a version conflict.
@@ -1510,6 +1520,37 @@ impl Session {
         response.error_for_status()?;
         Ok(true)
     }
+}
+
+thread_local! {
+    /// The newest manifest version this backend has read or written (each
+    /// account's backend has its own thread). Loaded from and saved to
+    /// [`SETTING_MANIFEST_VERSION`] by the actor around each sync.
+    static NEWEST_MANIFEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Settings key: the newest Storage Service manifest version seen.
+pub(crate) const SETTING_MANIFEST_VERSION: &str = "storage.manifest_version";
+
+pub(crate) fn remember_manifest_version(version: u64) {
+    NEWEST_MANIFEST.with(|newest| newest.set(newest.get().max(version)));
+}
+
+pub(crate) fn newest_manifest_version() -> u64 {
+    NEWEST_MANIFEST.with(std::cell::Cell::get)
+}
+
+/// Refuses a manifest older than one already seen: its records are still
+/// authentic, so a server could roll settings back (unblock someone, turn
+/// read receipts back on) and this device would write them back. Desktop
+/// likewise ignores a manifest older than its own.
+fn accept_manifest(manifest: &ManifestRecord) -> anyhow::Result<()> {
+    let newest = newest_manifest_version();
+    if manifest.version < newest {
+        bail!("Storage Service sent manifest version {} after {newest}; refusing a rollback", manifest.version);
+    }
+    remember_manifest_version(manifest.version);
+    Ok(())
 }
 
 /// The manifest after a write: the next version, from `device`, with
@@ -1686,6 +1727,18 @@ pub(crate) fn from_record(record: &ContactRecord) -> Option<StorageContact> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_older_manifest_is_refused() {
+        // Each test thread has its own newest version.
+        let manifest = |version| ManifestRecord { version, ..Default::default() };
+        super::accept_manifest(&manifest(5)).unwrap();
+        assert!(super::accept_manifest(&manifest(4)).is_err());
+        super::accept_manifest(&manifest(5)).unwrap();
+        super::accept_manifest(&manifest(7)).unwrap();
+        assert!(super::accept_manifest(&manifest(6)).is_err());
+        assert_eq!(super::newest_manifest_version(), 7);
+    }
+
     use presage::proto::contact_record::Name;
 
     use super::*;

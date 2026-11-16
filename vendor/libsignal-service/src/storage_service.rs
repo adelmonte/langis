@@ -186,6 +186,11 @@ impl StorageService {
         keys: Vec<Vec<u8>>,
         record_ikm: Option<&[u8]>,
     ) -> Result<Vec<StorageRecord>, StorageServiceError> {
+        // Langis: only the items asked for. Old items stay authentic, so a
+        // server could otherwise answer with a stale record in place of the
+        // current one (Desktop keeps only the keys it requested).
+        let requested: std::collections::HashSet<Vec<u8>> =
+            keys.iter().cloned().collect();
         let body = ReadOperation { read_key: keys };
         let mut buf = Vec::with_capacity(body.encoded_len());
         body.encode(&mut buf).expect("infallible encode into Vec");
@@ -209,6 +214,7 @@ impl StorageService {
         items
             .items
             .iter()
+            .filter(|item| requested.contains(&item.key))
             .map(|item| Self::decrypt_item(&self.storage_key, item, record_ikm))
             .collect()
     }

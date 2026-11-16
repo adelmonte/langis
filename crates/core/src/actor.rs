@@ -2817,6 +2817,13 @@ impl Actor {
     /// Reads names, profile keys, pins and archived/muted state from the
     /// Storage Service, then re-titles.
     async fn sync_storage(self: &Rc<Self>, manager: &SignalManager) {
+        // The newest manifest seen, kept across restarts, so an older one
+        // is refused (`storage::accept_manifest`).
+        if let Ok(Some(seen)) = self.db.setting(storage::SETTING_MANIFEST_VERSION).await
+            && let Ok(seen) = seen.parse::<u64>()
+        {
+            storage::remember_manifest_version(seen);
+        }
         // Favorites changed after this point are newer than the snapshot.
         let favorite_changes = self.favorite_downloads.local_changes.get();
         let storage::StorageSnapshot {
@@ -2846,6 +2853,10 @@ impl Actor {
             }
         };
         info!(contacts = contacts.len(), pinned = ?pinned.as_ref().map(Vec::len), "read storage service");
+        let newest = storage::newest_manifest_version().to_string();
+        if let Err(error) = self.db.set_setting(storage::SETTING_MANIFEST_VERSION, &newest).await {
+            warn!(%error, "couldn't keep the storage manifest version");
+        }
         if let Some(pinned) = pinned {
             match self.db.replace_pinned(&pinned).await {
                 Ok(true) => self.emit(Event::ConversationsChanged),
