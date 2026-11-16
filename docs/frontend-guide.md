@@ -110,7 +110,7 @@ The reads you will use most:
 |---|---|
 | `conversations()` | The chat list, pinned first, newest first. `archived_conversations()` for the rest. |
 | `conversation(&id)` | One chat. |
-| `messages(&id, before, limit)` | A page of messages, newest first. Pass the oldest `id` you have as `before` to page back. |
+| `messages(&id, before, limit)` | A page of messages, oldest first (the newest at the end). Pass the oldest `id` you have as `before` to page back. |
 | `messages_around`, `messages_after` | Pages around a search hit or after a point. |
 | `message(id)` | One message, after `MessageChanged` names it. |
 | `display_names()` | Names for authors and mentions. |
@@ -122,7 +122,10 @@ backend keeps the store, Signal's servers and your other devices in step,
 and a direct write skips all of that. The exceptions are frontend-only
 state: drafts (`set_draft`, `set_draft_with_styles`), emoji use for a recent
 list (`record_emoji_use`), and your own preferences in `set_setting` under a
-prefix of your own (for example `ui.`).
+prefix of your own (for example `ui.`). The theme and the two local call
+settings (incoming calls, always relay) are the core's keys: change them
+with `Command::SetLocalSetting`, and read the theme back with
+`Theme::from_setting(db.setting(SETTING_THEME))`.
 
 ## 6. Events say what to re-read
 

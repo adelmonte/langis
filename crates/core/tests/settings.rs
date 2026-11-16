@@ -1,5 +1,5 @@
-//! The screen share quality is saved and comes back with the call devices
-//! (on demo data, without the network).
+//! Settings kept on this device: the screen share quality (which comes back
+//! with the call devices) and the local settings (on demo data, offline).
 
 use futures::{StreamExt, executor::block_on};
 use langis_core::{Backend, Command, Config, Event, PORTAL_SOURCE, ShareQuality};
@@ -53,5 +53,35 @@ fn share_quality_is_saved_and_reported() {
             None => panic!("backend stopped"),
         }
     }
+    backend.stop(std::time::Duration::from_secs(5));
+}
+
+#[test]
+fn local_settings_are_saved() {
+    use langis_core::{LocalSetting, Theme};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        data_dir: dir.path().to_owned(),
+        db_key: [6u8; 32],
+        device_name: "test".into(),
+        demo: true,
+        former_data_dirs: Vec::new(),
+        call_lines: Default::default(),
+    };
+    let (backend, mut events) = Backend::start(config).unwrap();
+    backend.send(Command::SetLocalSetting(LocalSetting::Theme(Theme::Dark)));
+    backend.send(Command::SetLocalSetting(LocalSetting::IncomingCalls(false)));
+    backend.send(Command::SetLocalSetting(LocalSetting::AlwaysRelayCalls(true)));
+    // Commands run in order: once the devices come back, the settings are in.
+    backend.send(Command::LoadCallDevices);
+    next_devices(&mut events);
+    let db = backend.db().clone();
+    let read = |key: &'static str| {
+        let db = db.clone();
+        block_on(backend.spawn(async move { db.setting(key).await })).unwrap()
+    };
+    assert_eq!(Theme::from_setting(read(langis_core::SETTING_THEME).as_deref()), Theme::Dark);
+    assert_eq!(read(langis_core::SETTING_INCOMING_CALLS).as_deref(), Some("false"));
+    assert_eq!(read(langis_core::SETTING_ALWAYS_RELAY_CALLS).as_deref(), Some("true"));
     backend.stop(std::time::Duration::from_secs(5));
 }

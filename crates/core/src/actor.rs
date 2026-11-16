@@ -1149,6 +1149,12 @@ impl Actor {
                 Command::SetPhoneNumberDiscoverable(on) => self.set_phone_number_discoverable(on).await,
                 Command::SyncContacts => self.request_syncs(),
                 Command::SetAutoDownload(choices) => self.set_auto_download(choices).await,
+                Command::SetLocalSetting(setting) => {
+                    let (key, value) = setting.key_value();
+                    if let Err(error) = self.db.set_setting(key, value).await {
+                        self.error("failed to save the setting", error);
+                    }
+                }
                 Command::StartCall { conversation, video } if conversation.as_call_link().is_some() => {
                     self.start_link_call(conversation, video).await
                 }

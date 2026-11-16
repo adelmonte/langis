@@ -113,6 +113,57 @@ pub const SETTING_CONTACT_AVATARS: &str = "contact_avatars";
 /// (Desktop's `theme-setting`). Not synced; the link-time backup sets it.
 pub const SETTING_THEME: &str = "theme";
 
+/// This device's own settings, saved with `Command::SetLocalSetting`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalSetting {
+    /// `SETTING_THEME`.
+    Theme(Theme),
+    /// `SETTING_INCOMING_CALLS`: off turns incoming calls away.
+    IncomingCalls(bool),
+    /// `SETTING_ALWAYS_RELAY_CALLS`.
+    AlwaysRelayCalls(bool),
+}
+
+impl LocalSetting {
+    /// Its settings key and the value saved.
+    pub fn key_value(self) -> (&'static str, &'static str) {
+        let on = |on: bool| if on { "true" } else { "false" };
+        match self {
+            Self::Theme(theme) => (SETTING_THEME, theme.as_str()),
+            Self::IncomingCalls(value) => (SETTING_INCOMING_CALLS, on(value)),
+            Self::AlwaysRelayCalls(value) => (SETTING_ALWAYS_RELAY_CALLS, on(value)),
+        }
+    }
+}
+
+/// The app's theme (Desktop's `theme-setting`), as `SETTING_THEME` keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    /// From the saved value; anything else is `System`.
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value {
+            Some("light") => Self::Light,
+            Some("dark") => Self::Dark,
+            _ => Self::System,
+        }
+    }
+}
+
 /// One of the account's on/off settings that Signal syncs between devices
 /// (the `AccountRecord` in Storage Service; the first four also in the
 /// configuration sync message, and all but the notification ones in the
@@ -615,6 +666,9 @@ pub enum Command {
     /// Desktop's media auto-download choices (Data usage), kept on this
     /// device.
     SetAutoDownload(auto_download::AutoDownload),
+    /// Saves one of this device's own settings (not synced), the theme
+    /// or a call setting. The core reads them as it needs them; no event.
+    SetLocalSetting(LocalSetting),
     /// Adds groups' stories to the list we post to (`Always`, Desktop's
     /// "New group story") or removes them (`Never`, "Remove group story"),
     /// for the whole account (`GroupV2Record.storySendMode`).
