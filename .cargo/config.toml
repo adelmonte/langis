@@ -1,9 +1,6 @@
-# Sign the app before running it so Keychain access survives rebuilds
-# (scripts/setup-dev-signing.sh explains why).
+# Screen sharing's ScreenCaptureKit bridge (macOS only) is Swift: every binary
+# and test that links it needs the system's Swift runtime (in /usr/lib/swift).
 [target.'cfg(target_os = "macos")']
-runner = "scripts/cargo-runner.sh"
-# Screen sharing's ScreenCaptureKit bridge is Swift: every binary and test
-# that links it needs the system's Swift runtime (in /usr/lib/swift).
 rustflags = ["-C", "link-arg=-Wl,-rpath,/usr/lib/swift"]
 
 [env]

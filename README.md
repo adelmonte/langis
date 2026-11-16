@@ -66,7 +66,7 @@ GIF search needs your own Giphy API key (free at developers.giphy.com), pasted i
 
 ```sh
 cargo test --workspace        # store, mapping and backend tests, and headless GPUI tests against the demo
-cargo bench -p signal-emoji
+cargo bench -p langis-emoji
 ```
 
 ## License

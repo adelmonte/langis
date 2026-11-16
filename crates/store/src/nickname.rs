@@ -18,7 +18,7 @@ pub struct NicknameLimits {
 /// note). No remote config key sets them. The similarly named
 /// `global.nicknames.min` / `global.nicknames.max` are the length of a
 /// username's nickname part (`ts/util/Username.dom.ts`, defaults 3 and 32),
-/// which `signal_backend::recipients::username_in` checks, not these.
+/// which `langis_core::recipients::username_in` checks, not these.
 pub const NICKNAME_LIMITS: NicknameLimits = NicknameLimits { name_graphemes: 26, name_bytes: 128, note_graphemes: 240, note_bytes: 240 };
 
 /// A contact's nickname and note.

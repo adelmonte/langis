@@ -1,10 +1,10 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use signal_emoji::{SearchOptions, completion_at, search};
+use langis_emoji::{SearchOptions, completion_at, search};
 
 fn bench(c: &mut Criterion) {
-    signal_emoji::warm_up();
+    langis_emoji::warm_up();
     let opts = SearchOptions::default();
     // Each keystroke of type-ahead is a fresh search, so measure the whole ramp.
     for query in ["s", "sm", "smi", "smile", "slightly_sm", "face smiling", "smlie", "+1"] {
