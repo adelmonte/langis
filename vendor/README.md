@@ -95,6 +95,12 @@ Changes:
   saving a message takes a quarter second or more (`log_if_slow`), to find
   what holds up catching up on the server's queue.
 
+- `src/manager/registered.rs`: sync messages, stories, typing messages,
+  edits and upserted groups are no longer logged whole (`debug!(?msg)`,
+  `trace!(?group)`): a Keys sync holds the account entropy pool and master
+  key, and others hold attachment, sticker, call-link and profile keys and
+  message text. Changed by Langis.
+
 ## libsignal-service
 
 whisperfish/libsignal-service-rs at `7a7526741dfd9ad4c4894717f22651eb0506fb7e`

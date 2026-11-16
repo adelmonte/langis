@@ -1052,8 +1052,9 @@ impl<S: Store> Manager<S, Registered> {
                                         )
                                         .await;
                                         log_if_slow("updating a group", started);
-                                        if let Ok(Some(group)) = upserted {
-                                            trace!(?group, "upserted group");
+                                        // Not logged: a group holds its members' profile keys.
+                                        if let Ok(Some(_group)) = upserted {
+                                            trace!(revision, "upserted group");
                                         }
                                     }
 
@@ -2461,24 +2462,27 @@ async fn save_message<S: Store>(
             content: Some(SyncContent::CallEvent(_)),
             ..
         }) => Some(message),
-        ContentBody::SynchronizeMessage(msg) => {
-            debug!(
-                ?msg,
-                "skipping saving sync message without interesting fields"
-            );
+        // Sync messages, stories and edits aren't logged whole: they can
+        // hold the account's keys (a Keys sync), attachment and sticker
+        // keys, and message text.
+        ContentBody::SynchronizeMessage(_) => {
+            debug!("skipping saving sync message without interesting fields");
             None
         }
         ContentBody::ReceiptMessage(_) => Some(message),
         ContentBody::TypingMessage(msg) => {
-            debug!(?msg, "skipping saving typing message");
+            let _ = msg;
+            debug!("skipping saving typing message");
             None
         }
         ContentBody::StoryMessage(msg) => {
-            debug!(?msg, "skipping story message");
+            let _ = msg;
+            debug!("skipping story message");
             None
         }
         ContentBody::EditMessage(msg) => {
-            debug!(?msg, "invalid edited");
+            let _ = msg;
+            debug!("invalid edited");
             None
         }
     };
