@@ -23,7 +23,7 @@ pub use ringrtc::core::group_call::{ClientId, RingCancelReason};
 pub use ringrtc::lite::http::{Method as HttpMethod, Request as HttpRequest, Response as HttpResponse};
 pub use ringrtc::lite::sfu::{DemuxId, GroupMember};
 
-pub use screen::ShareSource;
+pub use screen::{PORTAL_SOURCE, ShareEvent, ShareQuality, ShareSource};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -74,6 +74,10 @@ pub enum CallEvent {
     /// to [`Calls::received_http_response`].
     Http { request_id: u32, request: HttpRequest },
     Group(GroupEvent),
+    /// How the screen share started with [`Calls::start_sharing`] is going;
+    /// `share` tells it from an earlier one. Hand it to
+    /// [`Calls::share_started`] or [`Calls::share_ended`].
+    Share { share: u64, event: ShareEvent },
 }
 
 /// A call's state, as the UI shows it (RingRTC's `CallState`).
@@ -408,8 +412,14 @@ pub struct Calls {
     remote: FrameSlot,
     local: FrameSlot,
     camera: Option<camera::Camera>,
-    /// Sharing the screen, in place of the camera.
+    /// Sharing the screen, in place of the camera: set while the
+    /// desktop's picker is open, and `share_live` once something was
+    /// picked (only then does it replace the camera).
     share: Option<screen::Share>,
+    share_live: bool,
+    /// Which share `share` is, for its events.
+    share_id: u64,
+    share_quality: ShareQuality,
     group_frames: GroupFrames,
     /// RingRTC's events' way out, for ours too.
     emit: Emit,
@@ -473,6 +483,9 @@ impl Calls {
             audio_on: true,
             camera: None,
             share: None,
+            share_live: false,
+            share_id: 0,
+            share_quality: ShareQuality::default(),
         })
     }
 
@@ -550,7 +563,7 @@ impl Calls {
     pub fn set_video_enabled(&mut self, enabled: bool) {
         // While presenting, the share has the video; the camera follows
         // when it stops (see `stop_sharing`).
-        if self.share.is_some() {
+        if self.share_live {
             return;
         }
         if enabled && self.camera.is_none() {
@@ -820,25 +833,60 @@ impl Calls {
         self.manager.received_http_response(request_id, response);
     }
 
-    /// The displays and windows there are to share.
+    /// What there is to share: on Linux one source, the desktop's own
+    /// picker ([`PORTAL_SOURCE`]), or none without a ScreenCast portal.
     pub fn share_sources() -> anyhow::Result<Vec<ShareSource>> {
         screen::sources()
     }
 
-    /// Desktop's "Present": sends `source` instead of the camera (which
-    /// stops), and tells them.
+    /// Desktop's "Present": opens the desktop's picker. Nothing changes
+    /// until the user picks something ([`CallEvent::Share`] with
+    /// [`ShareEvent::Started`]; then [`Calls::share_started`]). A share
+    /// already starting or running is stopped first.
     pub fn start_sharing(&mut self, source: &str) -> anyhow::Result<()> {
-        // (The camera stays until the share has started.)
-        let share = screen::Share::start(source, self.source.clone(), self.local.clone())?;
-        self.camera = None;
-        self.share = Some(share);
-        self.screenshare_mode(true);
+        let camera = self.camera.is_some();
+        self.stop_sharing(camera);
+        self.share_id += 1;
+        let (emit, share) = (self.emit.clone(), self.share_id);
+        let events = move |event| emit(CallEvent::Share { share, event });
+        self.share = Some(screen::Share::start(source, self.source.clone(), self.local.clone(), self.share_quality, events)?);
         Ok(())
     }
 
-    /// Stops presenting; `camera` turns the camera back on.
+    /// The share picked something: it replaces the camera, and they're
+    /// told. `Some(whether the camera was on)` when it did; `None` for an
+    /// earlier share's event.
+    pub fn share_started(&mut self, share: u64) -> Option<bool> {
+        if share != self.share_id || self.share.is_none() || self.share_live {
+            return None;
+        }
+        let camera = self.camera.take().is_some();
+        self.share_live = true;
+        self.screenshare_mode(true);
+        Some(camera)
+    }
+
+    /// The share ended on its own. Before anything was picked it's simply
+    /// gone (`false`); a live one is left for the caller to stop with
+    /// [`Calls::stop_sharing`], as the user would (`true`).
+    pub fn share_ended(&mut self, share: u64) -> bool {
+        if share != self.share_id || self.share.is_none() {
+            return false;
+        }
+        if !self.share_live {
+            self.share = None;
+            return false;
+        }
+        true
+    }
+
+    /// Stops presenting (or the picker); `camera` turns the camera back on
+    /// if the share had replaced it.
     pub fn stop_sharing(&mut self, camera: bool) {
         if self.share.take().is_none() {
+            return;
+        }
+        if !std::mem::replace(&mut self.share_live, false) {
             return;
         }
         self.local.clear();
@@ -846,11 +894,19 @@ impl Calls {
         self.set_video_enabled(camera);
     }
 
+    /// How shares are sent from now on, the running one too.
+    pub fn set_share_quality(&mut self, quality: ShareQuality) {
+        self.share_quality = quality.clamped();
+        if let Some(share) = &self.share {
+            share.set_quality(self.share_quality);
+        }
+    }
+
     /// Tells them our microphone, camera and sharing state. Set before
     /// the call connected (in the lobby, say), it reached no one: what's
     /// sent goes over the call's connection.
     pub fn send_sender_status(&mut self) {
-        let (video, sharing, audio) = (self.camera.is_some() || self.share.is_some(), self.share.is_some(), self.audio_on);
+        let (video, sharing, audio) = (self.camera.is_some() || self.share_live, self.share_live, self.audio_on);
         if let Ok(mut connection) = self.manager.active_connection() {
             let _ = connection.update_sender_status(signaling::SenderStatus {
                 video_enabled: Some(video),
@@ -864,8 +920,9 @@ impl Calls {
         self.camera.is_some()
     }
 
+    /// Presenting (something was picked and is being sent).
     pub fn is_sharing(&self) -> bool {
-        self.share.is_some()
+        self.share_live
     }
 
     /// As Desktop's `setOutgoingVideoIsScreenShare`: the encoder's hint and
@@ -890,7 +947,7 @@ impl Calls {
 
     /// After a call: the camera off and no stale frames.
     pub fn reset_media(&mut self) {
-        if self.share.take().is_some() {
+        if self.share.take().is_some() && std::mem::replace(&mut self.share_live, false) {
             self.screenshare_mode(false);
         }
         self.camera = None;

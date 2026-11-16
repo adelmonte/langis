@@ -192,7 +192,7 @@ when the file is ready.
 | `Command::StartCall { conversation, video }` | `Event::Call(Some(update))` as it rings and connects |
 | `Command::AcceptCall { video }` / `DeclineCall` / `HangUp` | `Event::Call(None)` when it's over |
 | `Command::SetCallAudio(on)`, `SetCallVideo(on)` | Updated `Event::Call` |
-| `Command::LoadCallDevices`, `SetCallDevice` | `Event::CallDevices` |
+| `Command::LoadCallDevices`, `SetCallDevice`, `SetShareQuality` | `Event::CallDevices` |
 
 An incoming call arrives as `Event::Call(Some(update))` with
 `update.incoming` set: ring.
@@ -203,8 +203,36 @@ participant). Each `FrameSlot::latest()` returns a `Frame` with `width`,
 `height`, BGRA pixels and a `seq` number. Poll it each frame you draw, and
 upload the pixels to a texture only when `seq` changed.
 
-Screen sharing isn't available on Linux yet: `Command::LoadShareSources`
-answers with an empty list.
+### Screen sharing
+
+Sharing goes through the XDG desktop portal, so the desktop (GNOME, KDE,
+wlroots compositors like sway, niri through its portal) shows its own
+picker for the screen or window. The flow:
+
+1. `Command::LoadShareSources` answers with `Event::ShareSources`: one
+   source, `langis_core::PORTAL_SOURCE`, when the desktop has a ScreenCast
+   portal, and an empty list when it doesn't (hide the Present button).
+2. `Command::StartSharing { source }` opens the desktop's picker. Nothing
+   changes in the call yet.
+3. When the user picks something, the call update has `sharing: true` and
+   the share replaces the camera. `call_video().local` shows what's being
+   sent. If they cancel, nothing happens; no event.
+4. `Command::StopSharing` stops it (or closes the picker). If the desktop
+   ends it (its sharing indicator, or the shared window closed), the call
+   update goes back to `sharing: false` the same way. A failure also sends
+   `Event::Error`.
+
+The portal only sends a new frame when the screen changes, so a still
+screen may show nothing for a moment after the share starts. Once a frame
+has come, it's resent every second while nothing changes.
+
+Quality is a setting: `Command::SetShareQuality(ShareQuality { max_height,
+fps })`. `max_height` caps the height (keeping the shape; 0 sends the
+screen's own size, up to 4096x2160) and `fps` is 1 to 60. It's saved, comes
+back in `Event::CallDevices` as `share_quality`, and applies to a share in
+progress at once. `ShareQuality::PRESETS` has named choices for a menu;
+the default is Desktop's 1080p at 15 fps. WebRTC still lowers the bitrate
+on a poor connection.
 
 ## 10. Stopping
 

@@ -99,6 +99,10 @@ pub const SETTING_INCOMING_CALLS: &str = "incoming_calls";
 /// Settings key: `"true"` to send every 1:1 call through Signal's relays
 /// (Desktop's "Always relay calls", `always-relay-calls`).
 pub const SETTING_ALWAYS_RELAY_CALLS: &str = "always_relay_calls";
+/// Settings key: how screen shares are sent, as `ShareQuality::to_setting`
+/// writes it (`1080@15`); unset is `ShareQuality::default()`. Set it with
+/// `Command::SetShareQuality`.
+pub const SETTING_SHARE_QUALITY: &str = "calls.share_quality";
 /// Settings key: when the phone's contacts last came (unix millis),
 /// Desktop's `synced_at`, shown as "Last import at".
 pub const SETTING_CONTACTS_SYNCED_AT: &str = "contacts_synced_at";
@@ -652,12 +656,21 @@ pub enum Command {
     ApproveCallJoin { aci: String, approve: bool },
     /// Takes someone out of our call link's call.
     RemoveFromCall { demux_id: u32 },
-    /// Lists screens and windows to present; answered with `Event::ShareSources`.
+    /// Lists what can be presented; answered with `Event::ShareSources`.
+    /// On Linux that's one source (`langis_calls::PORTAL_SOURCE`) when the
+    /// desktop has a ScreenCast portal, and none otherwise.
     LoadShareSources,
-    /// Presents a screen or window (an id from `Event::ShareSources`).
+    /// Presents (a source id from `Event::ShareSources`). On Linux the
+    /// desktop's picker opens; the call shows `sharing` once the user picks
+    /// something, and nothing changes if they cancel. A share the desktop
+    /// ends (its indicator, a closed window) stops as `StopSharing` would.
     StartSharing { source: String },
-    /// Stops presenting; the camera comes back if it was on.
+    /// Stops presenting (or closes the picker); the camera comes back if it
+    /// was on.
     StopSharing,
+    /// How screen shares are sent, saved (`SETTING_SHARE_QUALITY`); a share
+    /// in progress changes at once. Answered with `Event::CallDevices`.
+    SetShareQuality(ShareQuality),
     /// Lists microphones, speakers and cameras; answered with `Event::CallDevices`.
     LoadCallDevices,
     /// Chooses a device for calls (`id` from `Event::CallDevices`), saved.
@@ -1024,9 +1037,11 @@ pub struct CallDevices {
     pub microphone: Option<String>,
     pub speaker: Option<String>,
     pub camera: Option<String>,
+    /// How screen shares are sent (`Command::SetShareQuality`).
+    pub share_quality: ShareQuality,
 }
 
-pub use langis_calls::{Device, Devices, ShareSource};
+pub use langis_calls::{Device, Devices, PORTAL_SOURCE, ShareQuality, ShareSource};
 /// A call link's URL from its root key (`https://signal.link/call/#key=…`).
 pub use langis_calls::link_url as call_link_url;
 

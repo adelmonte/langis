@@ -1173,6 +1173,7 @@ impl Actor {
                 Command::LoadShareSources => self.load_share_sources().await,
                 Command::StartSharing { source } => self.start_sharing(source),
                 Command::StopSharing => self.stop_sharing(),
+                Command::SetShareQuality(quality) => self.set_share_quality(quality).await,
                 Command::SetCallDevice { kind, id } => self.set_call_device(kind, id).await,
                 Command::PeekGroupCall { conversation } if conversation.as_call_link().is_some() => {
                     self.peek_call_link(conversation).await

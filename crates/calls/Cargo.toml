@@ -17,3 +17,11 @@ nokhwa = { version = "0.10.11", features = ["input-native", "output-threaded"] }
 rand = { version = "0.10", features = ["sys_rng"] }
 anyhow.workspace = true
 tracing.workspace = true
+# Screen sharing: the XDG desktop portal picks what to share and hands
+# over a PipeWire stream of it (Wayland and X11 alike).
+ashpd = { version = "0.14", default-features = false, features = ["tokio", "screencast"] }
+pipewire = "0.10"
+# The portal's D-Bus calls run on a small runtime of the share's own.
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+# Scaling shared frames down to the chosen quality.
+fast_image_resize = "6"

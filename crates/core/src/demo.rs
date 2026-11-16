@@ -1205,11 +1205,12 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 emit(Event::Call(Some(update.clone())));
             }
             Command::LoadShareSources => {
-                let source = |id: &str, name: &str, is_display| crate::ShareSource { id: id.into(), name: name.into(), is_display };
-                emit(Event::ShareSources(Ok(vec![
-                    source("display:1", "Entire screen", true),
-                    source("window:1", "Notes: Trail plan", false),
-                ])));
+                // As on Linux: the desktop's picker is the one source.
+                emit(Event::ShareSources(Ok(vec![crate::ShareSource {
+                    id: crate::PORTAL_SOURCE.into(),
+                    name: "Choose a screen or window".into(),
+                    is_display: true,
+                }])));
             }
             Command::StartSharing { .. } | Command::StopSharing => {
                 let mut current = call.borrow_mut();
@@ -1219,21 +1220,26 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 }
             }
             // Made-up devices; choices are saved like the real ones.
-            Command::LoadCallDevices | Command::SetCallDevice { .. } => {
+            Command::LoadCallDevices | Command::SetCallDevice { .. } | Command::SetShareQuality(_) => {
                 if let Command::SetCallDevice { kind, id } = &command {
                     let _ = db.set_setting(kind.setting(), id).await;
                 }
+                if let Command::SetShareQuality(quality) = &command {
+                    let _ = db.set_setting(crate::SETTING_SHARE_QUALITY, &quality.clamped().to_setting()).await;
+                }
+                let quality = db.setting(crate::SETTING_SHARE_QUALITY).await.ok().flatten();
                 let device = |id: &str, name: &str| crate::Device { id: id.into(), name: name.into() };
                 let saved = async |kind: crate::DeviceKind| db.setting(kind.setting()).await.ok().flatten().filter(|s| !s.is_empty());
                 emit(Event::CallDevices(crate::CallDevices {
                     devices: crate::Devices {
-                        microphones: vec![device("mic-1", "MacBook Pro Microphone"), device("mic-2", "USB Microphone")],
-                        speakers: vec![device("out-1", "MacBook Pro Speakers"), device("out-2", "Headphones")],
-                        cameras: vec![device("FaceTime HD Camera", "FaceTime HD Camera")],
+                        microphones: vec![device("mic-1", "Built-in Audio Analog Stereo"), device("mic-2", "USB Microphone")],
+                        speakers: vec![device("out-1", "Built-in Audio Analog Stereo"), device("out-2", "Headphones")],
+                        cameras: vec![device("Integrated Camera", "Integrated Camera")],
                     },
                     microphone: saved(crate::DeviceKind::Microphone).await,
                     speaker: saved(crate::DeviceKind::Speaker).await,
                     camera: saved(crate::DeviceKind::Camera).await,
+                    share_quality: quality.as_deref().and_then(crate::ShareQuality::from_setting).unwrap_or_default(),
                 }));
             }
             // The one thing the demo fetches: previews of links you type.

@@ -29,9 +29,13 @@ Not checked yet:
 - Linking a real phone, or anything else against Signal's servers from Linux.
 - Calls on Linux (audio goes through WebRTC's PulseAudio support, which
   PipeWire also serves; the camera through V4L2).
+- Screen sharing in a real call. The capture half (the desktop portal's
+  picker, then frames over PipeWire, scaled to the chosen quality) passes
+  `scripts/screen-share-test.sh`, which runs it in a throwaway headless
+  sway session. GNOME's and KDE's portals haven't been tried.
 
-Missing on Linux for now: screen sharing in calls (needs the XDG ScreenCast
-portal) and re-encoding videos before sending (they go as they are).
+Missing on Linux for now: re-encoding videos before sending (they go as
+they are).
 
 ## Crates
 
@@ -71,6 +75,8 @@ Rust 1.88 or newer, and:
 - `clang` (for BoringSSL's bindings in libsignal)
 - `cmake`
 - PulseAudio headers (Arch: `libpulse`, Debian/Ubuntu: `libpulse-dev`)
+- PipeWire headers, for screen sharing (Arch: `libpipewire`,
+  Debian/Ubuntu: `libpipewire-0.3-dev`)
 
 The first build downloads Signal's prebuilt WebRTC (about 28 MB) into
 `target/webrtc`, and takes a few minutes.

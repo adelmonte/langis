@@ -62,6 +62,7 @@ fn apply_choices(calls: &mut langis_calls::Calls, choices: &crate::CallDevices) 
         warn!(kind, "chosen device unavailable; using the system's default");
     }
     calls.set_camera(choices.camera.clone());
+    calls.set_share_quality(choices.share_quality);
 }
 
 /// How a call went, from how it ended (Desktop's call history).
@@ -112,32 +113,63 @@ impl Actor {
         self.emit(Event::ShareSources(sources));
     }
 
-    /// Desktop's "Present", in place of the camera.
+    /// Desktop's "Present": opens the desktop's picker. The call changes
+    /// once something is picked (`share_started`).
     pub(super) fn start_sharing(&self, source: String) {
         let group = self.group_sharing().is_some();
         if !group && self.call.borrow().as_ref().is_none_or(|c| !matches!(c.status, CallStatus::Connected { .. })) {
             return;
         }
         let mut result = Ok(());
-        let mut camera_on = false;
-        self.with_calls(|calls| {
-            camera_on = calls.camera_on();
-            result = calls.start_sharing(&source);
-        });
-        match result {
-            Ok(()) => {
-                if group {
-                    self.set_group_sharing(true, Some(camera_on));
-                    self.group_presenting(true);
-                    self.group_media(None, Some(true));
-                } else if let Some(call) = self.call.borrow_mut().as_mut() {
-                    call.sharing = true;
-                    call.camera_before_sharing = camera_on;
-                }
-                self.emit_call();
-            }
-            Err(error) => self.error("couldn't share your screen", format!("{error:#}")),
+        self.with_calls(|calls| result = calls.start_sharing(&source));
+        if let Err(error) = result {
+            self.error("couldn't share your screen", format!("{error:#}"));
         }
+    }
+
+    /// The user picked what to share: it replaces the camera.
+    fn share_started(&self, share: u64) {
+        let mut started = None;
+        self.with_calls(|calls| started = calls.share_started(share));
+        let Some(camera_on) = started else { return };
+        if self.group_sharing().is_some() {
+            self.set_group_sharing(true, Some(camera_on));
+            self.group_presenting(true);
+            self.group_media(None, Some(true));
+        } else if let Some(call) = self.call.borrow_mut().as_mut() {
+            call.sharing = true;
+            call.camera_before_sharing = camera_on;
+        } else {
+            // The call ended while the picker was open.
+            self.with_calls(|calls| calls.stop_sharing(false));
+            return;
+        }
+        self.emit_call();
+    }
+
+    /// The share ended without `StopSharing`: cancelled, ended by the
+    /// desktop, or failed.
+    fn share_ended(&self, share: u64, error: Option<String>) {
+        let mut live = false;
+        self.with_calls(|calls| live = calls.share_ended(share));
+        if live {
+            self.stop_sharing();
+        }
+        if let Some(error) = error {
+            self.error("couldn't share your screen", error);
+        }
+    }
+
+    pub(super) async fn set_share_quality(&self, quality: crate::ShareQuality) {
+        let quality = quality.clamped();
+        if let Err(error) = self.db.set_setting(crate::SETTING_SHARE_QUALITY, &quality.to_setting()).await {
+            return self.error("couldn't save the screen share quality", error);
+        }
+        self.call_choices.borrow_mut().share_quality = quality;
+        if let Some(calls) = self.calls.borrow_mut().as_mut() {
+            calls.set_share_quality(quality);
+        }
+        self.load_call_devices().await;
     }
 
     pub(super) fn stop_sharing(&self) {
@@ -148,12 +180,21 @@ impl Actor {
                 self.group_presenting(false);
                 self.group_media(None, Some(camera));
                 self.emit_call();
+            } else {
+                // Only the picker was open.
+                self.with_calls(|calls| calls.stop_sharing(false));
             }
             return;
         }
         let camera = {
             let mut call = self.call.borrow_mut();
-            let Some(call) = call.as_mut().filter(|c| c.sharing) else { return };
+            let Some(call) = call.as_mut().filter(|c| c.sharing) else {
+                drop(call);
+                if let Some(calls) = self.calls.borrow_mut().as_mut() {
+                    calls.stop_sharing(false);
+                }
+                return;
+            };
             call.sharing = false;
             call.camera_before_sharing
         };
@@ -172,6 +213,8 @@ impl Actor {
                 crate::DeviceKind::Camera => choices.camera = saved,
             }
         }
+        let quality = self.db.setting(crate::SETTING_SHARE_QUALITY).await.ok().flatten();
+        choices.share_quality = quality.as_deref().and_then(crate::ShareQuality::from_setting).unwrap_or_default();
         *self.call_choices.borrow_mut() = choices;
     }
 
@@ -347,6 +390,8 @@ impl Actor {
                 }
                 CallEvent::Http { request_id, request } => self.group_http(request_id, request),
                 CallEvent::Group(event) => self.on_group_event(event).await,
+                CallEvent::Share { share, event: langis_calls::ShareEvent::Started } => self.share_started(share),
+                CallEvent::Share { share, event: langis_calls::ShareEvent::Ended(error) } => self.share_ended(share, error),
             }
         }
     }
