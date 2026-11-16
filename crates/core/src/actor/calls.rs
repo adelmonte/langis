@@ -351,6 +351,23 @@ impl Actor {
         }
     }
 
+    /// Whether a call with them goes through Signal's relays only, so they
+    /// don't learn our IP address: when the user asks for that, and always
+    /// with someone not in the phone's contacts, both ways (Desktop's
+    /// `getCallSettings`: `hideIp: alwaysRelay || !isInSystemContacts`).
+    /// The decision is made before the call is answered, since connecting
+    /// starts while it rings.
+    async fn relay_call_with(&self, peer: &str) -> bool {
+        if self.always_relay_calls().await {
+            return true;
+        }
+        let contact = match self.db.conversation(&ConversationId::direct(peer)).await.ok().flatten() {
+            Some(c) => c.system_contact,
+            None => self.db.system_contacts().await.unwrap_or_default().iter().any(|s| s == peer),
+        };
+        !contact
+    }
+
     /// Whether a call from them may ring (Desktop's `handleCallingMessage`:
     /// the chat accepted, and not just because it's empty, its
     /// `ignoreEmptyConvo`).
@@ -435,7 +452,7 @@ impl Actor {
                 if let Some(call) = self.call.borrow_mut().as_mut().filter(|c| c.peer == peer) {
                     call.call_id = Some(call_id);
                 }
-                let relay = self.always_relay_calls().await;
+                let relay = self.relay_call_with(&peer).await;
                 self.proceed(call_id, relay).await;
             }
             State::Incoming { video } => {
@@ -453,6 +470,12 @@ impl Actor {
                     self.record_missed_call(&conversation, call_id, video).await;
                     return;
                 }
+                // A call may have started while that was read: still one at
+                // a time, and never replace it (its camera would stay on).
+                if self.call.borrow().is_some() || self.group_call.borrow().is_some() {
+                    self.with_calls(|calls| calls.drop_call(call_id));
+                    return;
+                }
                 *self.call.borrow_mut() = Some(ActiveCall {
                     peer: peer.clone(),
                     call_id: Some(call_id),
@@ -468,11 +491,7 @@ impl Actor {
                     started_at: now_millis(),
                     connected: false,
                 });
-                // As Desktop: relay everything when asked to, or for someone
-                // without a chat (not a contact), so they don't learn our IP
-                // address.
-                let stranger = self.db.conversation(&conversation).await.ok().flatten().is_none();
-                let relay = stranger || self.always_relay_calls().await;
+                let relay = self.relay_call_with(&peer).await;
                 self.proceed(call_id, relay).await;
                 self.emit_call();
             }
