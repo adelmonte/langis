@@ -146,6 +146,14 @@ change (sent, delivered, read, failed) comes as `MessageChanged`. Files go
 with `SendImages` or `SendFile`, and replies, reactions, edits and deletes
 each have a command.
 
+**Before sending, check safety numbers.** If the user marked someone
+verified and their safety number has changed since, Signal Desktop holds the
+send until the user confirms. Langis leaves that prompt to you: call
+`langis_core::unverified_people(db)` and `stopping_send(&conversation, &set)`
+before a send, and if anyone is listed, ask first. The core does add the
+"safety number changed" notice to the chat by itself, on receive and after
+sends.
+
 Mark a chat read when the user looks at it: `Command::MarkRead { conversation }`.
 That also tells the phone and, with read receipts on, the sender.
 
