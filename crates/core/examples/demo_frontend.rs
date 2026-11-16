@@ -1,4 +1,4 @@
-//! The smallest Langis frontend: start the backend on demo data, list the
+//! The smallest langis frontend: start the backend on demo data, list the
 //! chats, send a message, and print what comes back.
 //!
 //! Run it with `cargo run -p langis-core --example demo_frontend`. It never
@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
         data_dir: dir.path().to_owned(),
         // A real frontend gets this from `langis_core::keys::load_or_create`.
         db_key: [7; 32],
-        device_name: "Langis demo".into(),
+        device_name: "langis demo".into(),
         demo: true,
         former_data_dirs: Vec::new(),
         call_lines: Default::default(),
@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
     let chat = chats.first().ok_or_else(|| anyhow::anyhow!("no chats"))?.id.clone();
     backend.send(Command::SendText {
         conversation: chat.clone(),
-        body: "Hello from Langis".into(),
+        body: "Hello from langis".into(),
         quote: None,
         preview: None,
         mentions: Vec::new(),

@@ -632,7 +632,7 @@ impl IdentityKeyStore for SqliteProtocolStore {
         identity: &IdentityKey,
         direction: Direction,
     ) -> Result<bool, SignalProtocolError> {
-        // Langis: a verified contact's changed key isn't sent to until the
+        // langis: a verified contact's changed key isn't sent to until the
         // app's user confirms (see `VerifiedKeys`).
         if direction == Direction::Sending
             && !self

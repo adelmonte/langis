@@ -12,7 +12,7 @@ default = []
 cdsi = ["libsignal-service/cdsi"]
 
 [lib]
-# Langis: the examples in its docs use presage-store-sqlite, a
+# langis: the examples in its docs use presage-store-sqlite, a
 # dev-dependency the vendored copy doesn't have.
 doctest = false
 

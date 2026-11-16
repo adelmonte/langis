@@ -99,22 +99,22 @@ Changes:
   edits and upserted groups are no longer logged whole (`debug!(?msg)`,
   `trace!(?group)`): a Keys sync holds the account entropy pool and master
   key, and others hold attachment, sticker, call-link and profile keys and
-  message text. Changed by Langis.
+  message text. Changed by langis.
 
 - `src/manager/registered.rs`: `Manager::send_story_with_sender_key` takes
   the group's send endorsements, and a group story's sender key
   distribution message to a member we have no profile key for goes sealed
   with a one-member `Group-Send-Token`, as group messages do. It went
-  identified, telling the server who sent it. Changed by Langis.
+  identified, telling the server who sent it. Changed by langis.
 
 - `src/manager/registered.rs`, `src/errors.rs`: `get_attachment` no longer
   preallocates the sender's claimed size (a claimed terabyte aborted on
   allocation) beyond 16 MiB, and stops a download past 1 GiB with the new
-  `Error::AttachmentTooLarge`. Changed by Langis.
+  `Error::AttachmentTooLarge`. Changed by langis.
 
 - `Cargo.toml`: doc-tests off (`[lib] doctest = false`): the examples in
   its docs use presage-store-sqlite as a dev-dependency, which the vendored
-  copy doesn't have. Changed by Langis.
+  copy doesn't have. Changed by langis.
 
 ## libsignal-service
 
@@ -227,16 +227,16 @@ this revision on 2026-11-05. Changes:
   a device the server calls stale (410) or extra (409) has its active
   session archived (`archive_device_session`), not its whole record
   deleted, as Desktop's `handle409Response` and `handle410Response` do:
-  messages already on their way from it still decrypt. Changed by Langis.
+  messages already on their way from it still decrypt. Changed by langis.
 - `Cargo.toml`: upstream's dev-dependencies (less `clap`, for the examples
   that aren't vendored) and uuid's `v4` feature, so the crate's tests run
-  as a workspace member (`cargo test --workspace`). Changed by Langis.
+  as a workspace member (`cargo test --workspace`). Changed by langis.
 
 ## presage-store-sqlite
 
 whisperfish/presage at `4b81740610c301cbd54d95f4dbd4cadd692af95e`, the
 `presage-store-sqlite` crate, with its `.sqlx` offline query data. Vendored
-by Langis on 2026-11-16. Changes:
+by langis on 2026-11-16. Changes:
 
 - `src/lib.rs`, `src/protocol.rs`: `VerifiedKeys`, the identity keys the
   app marked verified (`SqliteStore::verified_keys`). `is_trusted_identity`

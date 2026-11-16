@@ -1,7 +1,7 @@
-Langis, a fork of Vernam
-Copyright (C) 2026 Langis contributors
+langis, a fork of Vernam
+Copyright (C) 2026 langis contributors
 Based on Vernam (formerly Signal GPUI, then Ziggy), Copyright (C) 2026 Ken
-Powers, https://github.com/knpwrs/vernam. Langis keeps Vernam's backend
+Powers, https://github.com/knpwrs/vernam. langis keeps Vernam's backend
 crates and removes its macOS GPUI app; `git log` dates every change since.
 
 This program is free software: you can redistribute it and/or modify it under
@@ -30,7 +30,7 @@ Modified libraries, vendored in vendor/ (AGPL-3.0-only):
   All are Copyright their upstream authors (the whisperfish contributors)
   and keep their licenses in vendor/*/LICENSE.md. They are modified
   versions, changed by Ken Powers for Vernam (then Signal GPUI) from
-  2026-10-15 and by Langis contributors from 2026-11-16: vendor/README.md
+  2026-10-15 and by langis contributors from 2026-11-16: vendor/README.md
   lists each change, and the git history of vendor/ dates it.
 
 Signal Desktop (AGPL-3.0-only), Copyright Signal Messenger, LLC,

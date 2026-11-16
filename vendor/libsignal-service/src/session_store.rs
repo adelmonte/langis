@@ -6,7 +6,7 @@ use libsignal_protocol::{
 
 use crate::{content::ServiceError, push_service::DEFAULT_DEVICE_ID};
 
-/// Archives the active session with `address` (Langis), as Signal Desktop
+/// Archives the active session with `address` (langis), as Signal Desktop
 /// does for a device the server calls stale (410) or extra (409)
 /// (`handle409Response`, `handle410Response`): the record and its previous
 /// states stay, so messages already on their way from that device still

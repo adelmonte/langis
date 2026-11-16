@@ -1,4 +1,4 @@
-# Writing a Langis frontend
+# Writing a langis frontend
 
 A frontend does three things:
 
@@ -21,7 +21,7 @@ use langis_core::{Backend, Config};
 let config = Config {
     data_dir,              // e.g. ~/.local/share/<your-app>
     db_key,                // from keys::load_or_create; see "The database key"
-    device_name: "My Langis app".into(),  // shown in the phone's Linked devices
+    device_name: "My langis app".into(),  // shown in the phone's Linked devices
     demo: false,           // true: made-up data, no network
     former_data_dirs: Vec::new(),
     call_lines: Default::default(),

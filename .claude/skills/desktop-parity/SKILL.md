@@ -1,11 +1,11 @@
 ---
 name: desktop-parity
-description: Catch Langis up with Signal Desktop. Reads the Desktop commit recorded in .signal-desktop-hash, lists every Desktop commit since, sorts out the ones that change behavior Langis has or should have, implements them, reviews, commits, and moves the hash forward. Use when asked to sync with Signal Desktop, check for parity, "what's new in Desktop", or update .signal-desktop-hash.
+description: Catch langis up with Signal Desktop. Reads the Desktop commit recorded in .signal-desktop-hash, lists every Desktop commit since, sorts out the ones that change behavior langis has or should have, implements them, reviews, commits, and moves the hash forward. Use when asked to sync with Signal Desktop, check for parity, "what's new in Desktop", or update .signal-desktop-hash.
 ---
 
 # Desktop parity
 
-Langis follows Signal Desktop (AGENTS.md, "Signal Desktop is the reference"). `.signal-desktop-hash` at the repository root holds the full hash of the last commit on Desktop's `main` that Langis has been checked against: every Desktop commit up to and including it has either been carried over or judged not to apply. This skill moves it forward.
+langis follows Signal Desktop (AGENTS.md, "Signal Desktop is the reference"). `.signal-desktop-hash` at the repository root holds the full hash of the last commit on Desktop's `main` that langis has been checked against: every Desktop commit up to and including it has either been carried over or judged not to apply. This skill moves it forward.
 
 ## 1. Get Desktop's history
 
@@ -24,19 +24,19 @@ git -C "$SCRATCH/sd" log --reverse --format='%H %ad %s' --date=short "$BASE..ori
 
 Make a ledger, one row per commit: hash, subject, verdict, reason. Every commit gets a row, so nothing gets skipped without a reason. Verdicts:
 
-- **skip**: the commit doesn't reach behavior Langis has or could have. That covers build, CI, lint, dependency bumps (except libsignal and RingRTC, see below), Storybook, mock-server-only changes, tests only, string updates, React or dialog migrations with no change in behavior, and "Desktop Primary:" features, since Langis is only ever a linked device.
-- **already**: Langis already does what the commit makes Desktop do. Cite the Langis file and function that shows it.
-- **do**: a protocol, sync, storage, backup, receipt, attachment, notification, remote-config or user-visible behavior change that Langis lacks. That includes new features behind remote-config flags.
-- **ask**: the commit changes the design or scope, or it reverses something Langis deliberately does differently.
+- **skip**: the commit doesn't reach behavior langis has or could have. That covers build, CI, lint, dependency bumps (except libsignal and RingRTC, see below), Storybook, mock-server-only changes, tests only, string updates, React or dialog migrations with no change in behavior, and "Desktop Primary:" features, since langis is only ever a linked device.
+- **already**: langis already does what the commit makes Desktop do. Cite the langis file and function that shows it.
+- **do**: a protocol, sync, storage, backup, receipt, attachment, notification, remote-config or user-visible behavior change that langis lacks. That includes new features behind remote-config flags.
+- **ask**: the commit changes the design or scope, or it reverses something langis deliberately does differently.
 
 Judge from the diff (`git show <hash>`), not the subject line. A subject like "Fix X" often changes wire behavior. Look closely at changes to:
 
-- `protos/*.proto` (Backups, SignalStorage, SignalService), even renames: field numbers are what matter. New Storage Service record types also mean checking that Langis keeps identifiers it doesn't know when it rewrites the manifest.
+- `protos/*.proto` (Backups, SignalStorage, SignalService), even renames: field numbers are what matter. New Storage Service record types also mean checking that langis keeps identifiers it doesn't know when it rewrites the manifest.
 - `ts/RemoteConfig.dom.ts`: a new key means a new flag, and its row belongs in `todo.md`'s remote-config table.
 - `ts/messageModifiers/*`, `ts/util/handle*`, `ts/background.preload.ts` (receive paths), `ts/textsecure/SendMessage*` (urgent flags, sync messages), `ts/util/getCapabilities*`, `ts/services/storage*`, `ts/services/backups/*`.
 - libsignal or RingRTC bumps: check whether presage or the vendored crates need the same bump, and record what you find even if nothing needs doing.
 
-For each "already" or "do" verdict, search Langis (`crates/`, `vendor/`) for the area before deciding. The first check is often wrong (a read sync is skipped in one place but a delete sync isn't in another), so look at every path the Desktop change touches.
+For each "already" or "do" verdict, search langis (`crates/`, `vendor/`) for the area before deciding. The first check is often wrong (a read sync is skipped in one place but a delete sync isn't in another), so look at every path the Desktop change touches.
 
 Show the user the ledger's "do" and "ask" rows before starting large work. "skip" and "already" rows go in the final report, one line each.
 
@@ -55,7 +55,7 @@ As the last commit, write the newest Desktop hash you triaged (the last line of 
 ## Report
 
 - The Desktop range checked (old hash, new hash, versions) and the number of commits.
-- What was carried over, with Langis commit hashes.
-- "already" rows, each with the Langis location that shows it.
+- What was carried over, with langis commit hashes.
+- "already" rows, each with the langis location that shows it.
 - "ask" items and anything left undone.
 - Tests run and their results.

@@ -8,7 +8,7 @@
 //! standard quality unless the sender picks high quality for that message;
 //! we have no such choice, so it's always standard.
 //!
-//! Langis has no transcoder yet, so videos go as they are. The sizing
+//! langis has no transcoder yet, so videos go as they are. The sizing
 //! rules below are kept for one (an ffmpeg or GStreamer backend).
 
 use std::path::Path;
@@ -73,7 +73,7 @@ pub fn duration_label(secs: f64) -> String {
 }
 
 /// Whether a video of this type is re-encoded before sending. Desktop
-/// transcodes MP4, Ogg and WebM (`isVideoTypeSupported`); Langis has no
+/// transcodes MP4, Ogg and WebM (`isVideoTypeSupported`); langis has no
 /// transcoder yet, so nothing is.
 pub fn transcodes(_content_type: &str) -> bool {
     false
@@ -167,7 +167,7 @@ mod tests {
     }
 
     /// A real re-encode, of a clip ffmpeg makes (skipped without it). Kept
-    /// for when Langis gets a transcoder.
+    /// for when langis gets a transcoder.
     #[test]
     #[ignore = "no transcoder yet"]
     fn a_1080p_clip_comes_out_480p_with_its_sound() {

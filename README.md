@@ -1,6 +1,6 @@
-# Langis
+# langis
 
-A Signal client library in Rust, with no UI. Langis does the Signal side
+A Signal client library in Rust, with no UI. langis does the Signal side
 (linking, sending, receiving, groups, attachments, calls, sync with your
 other devices) and stores everything in an encrypted database. You bring the
 interface: egui, GTK, Qt, a TUI, a bot, whatever you like.
@@ -8,7 +8,7 @@ interface: egui, GTK, Qt, a TUI, a bot, whatever you like.
 It links to your phone as a secondary device, the way Signal Desktop does.
 It is unofficial and not affiliated with Signal.
 
-Langis is a fork of [Vernam](https://github.com/knpwrs/vernam), a native
+langis is a fork of [Vernam](https://github.com/knpwrs/vernam), a native
 Signal client for macOS. It keeps Vernam's backend, drops the macOS app, and
 targets Linux.
 
@@ -83,4 +83,4 @@ cargo run -p langis-core --example demo_frontend
 ## License
 
 AGPL-3.0-only, like Signal's libraries it links. See LICENSE and NOTICE.
-A frontend that links Langis is under the AGPL too.
+A frontend that links langis is under the AGPL too.

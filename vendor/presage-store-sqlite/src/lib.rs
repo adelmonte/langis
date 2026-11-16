@@ -30,7 +30,7 @@ pub struct SqliteStore {
     pub(crate) verified: VerifiedKeys,
 }
 
-/// Langis: the identity keys the user marked verified, by protocol address
+/// langis: the identity keys the user marked verified, by protocol address
 /// name (the service id string), shared by every clone of the store.
 ///
 /// A send to a verified contact whose identity key has changed is refused
@@ -135,7 +135,7 @@ impl SqliteStore {
         })
     }
 
-    /// Langis: the verified keys sends are checked against (shared by every
+    /// langis: the verified keys sends are checked against (shared by every
     /// clone of this store).
     pub fn verified_keys(&self) -> VerifiedKeys {
         self.verified.clone()

@@ -1609,7 +1609,7 @@ impl<S: Store> Manager<S, Registered> {
             .as_millis() as u64;
         let our_aci = self.state.data.service_ids.aci();
         // A group story's distribution messages go as ordinary messages:
-        // sealed with the member's access key, or (Langis) with a
+        // sealed with the member's access key, or (langis) with a
         // one-member Group-Send-Token when we have no profile key for
         // them, as group messages do. Without either they'd go
         // identified, telling the server who sent them.
@@ -1718,7 +1718,7 @@ impl<S: Store> Manager<S, Registered> {
         let mut service = self.identified_push_service();
         let mut attachment_stream = service.get_attachment(attachment_pointer).await?;
 
-        // Langis: the size is the sender's claim, so it only hints at the
+        // langis: the size is the sender's claim, so it only hints at the
         // buffer (a claimed terabyte would abort on allocation), and the
         // download stops at a hard cap far above Signal's attachment limit.
         const MAX_CIPHERTEXT_BYTES: u64 = 1024 * 1024 * 1024;

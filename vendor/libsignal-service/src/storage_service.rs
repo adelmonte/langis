@@ -186,7 +186,7 @@ impl StorageService {
         keys: Vec<Vec<u8>>,
         record_ikm: Option<&[u8]>,
     ) -> Result<Vec<StorageRecord>, StorageServiceError> {
-        // Langis: only the items asked for. Old items stay authentic, so a
+        // langis: only the items asked for. Old items stay authentic, so a
         // server could otherwise answer with a stale record in place of the
         // current one (Desktop keeps only the keys it requested).
         let requested: std::collections::HashSet<Vec<u8>> =
