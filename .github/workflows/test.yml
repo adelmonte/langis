@@ -19,8 +19,10 @@ jobs:
             libpulse-dev libpipewire-0.3-dev libasound2-dev libspeexdsp-dev \
             libv4l-dev libudev-dev libdbus-1-dev
 
-      # protoc at the version mise.toml pins.
+      # protoc at the version mise.toml pins. Dependencies build outside
+      # the repo, where mise's shim doesn't resolve, so point at the binary.
       - uses: jdx/mise-action@v2
+      - run: echo "PROTOC=$(mise which protoc)" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 
