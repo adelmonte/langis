@@ -14,8 +14,11 @@ targets Linux.
 
 ## Status
 
-Early. What has been checked so far, on Linux:
+Early, but in daily use. What has been checked so far, on Linux:
 
+- Linking to a real phone as a secondary device, and everyday messaging
+  against Signal's servers, through [langis-gui](https://github.com/adelmonte/langis-gui)
+  since November 2026.
 - The workspace builds, and its 500+ tests pass (`cargo test --workspace`),
   the vendored libraries' own included.
 - The demo backend runs end to end: `cargo run -p langis-core --example demo_frontend`.
@@ -26,7 +29,6 @@ Early. What has been checked so far, on Linux:
 
 Not checked yet:
 
-- Linking a real phone, or anything else against Signal's servers from Linux.
 - Calls on Linux (audio goes through WebRTC's PulseAudio support, which
   PipeWire also serves; the camera through V4L2).
 - Screen sharing in a real call. The capture half (the desktop portal's
@@ -46,6 +48,11 @@ Videos are re-encoded smaller before sending, as Desktop does, when
 | `langis-calls` | Calls through Signal's RingRTC. Used by the core; frontends only see its video frames. |
 | `langis-emoji` | Emoji data and search, for frontends that want a picker. |
 | `vendor/` | Modified copies of presage and libsignal-service-rs. |
+
+## Frontends
+
+- [langis-gui](https://github.com/adelmonte/langis-gui): a desktop client
+  in egui that follows Signal Desktop's look and layout.
 
 ## Writing a frontend
 
