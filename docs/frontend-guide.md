@@ -144,6 +144,7 @@ Most events carry ids, not data. React by re-reading:
 | `MessageRemoved`, `ConversationRemoved`, `ConversationCleared` | Drop it from your view |
 | `Typing { conversation, author, started }` | Show or hide "typing..." |
 | `AccountSettingsChanged` | `setting(...)` for what you show |
+| `ChatColorsChanged` (after `Command::EditChatColors`) | `chat_colors()` |
 | `Error(text)` | Show it |
 
 Commands that ask a question answer with their own event, named in the

@@ -2416,6 +2416,11 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 emit(Event::OwnProfileChanged);
                 emit(Event::UsernameLinkReset(Ok(())));
             }
+            Command::EditChatColors(edit) => {
+                if let Ok(true) = db.edit_chat_colors(edit).await {
+                    emit(Event::ChatColorsChanged);
+                }
+            }
             Command::EditChatFolders(edit) => {
                 // As here, without Storage Service.
                 if let Ok(changed) = db.edit_chat_folders(edit).await

@@ -801,6 +801,11 @@ pub enum Command {
     /// pane), here and for the whole account (`ChatFolderRecord`s).
     /// Answered with `Event::ChatFoldersChanged`.
     EditChatFolders(langis_store::ChatFolderEdit),
+    /// Changes the chat colors (Desktop's chat color settings): the
+    /// default, one chat's, or the custom colors. Kept on this device, as
+    /// Desktop keeps them. Answered with `Event::ChatColorsChanged` when
+    /// something changed; read them with `AppDb::chat_colors`.
+    EditChatColors(langis_store::ChatColorEdit),
 }
 
 /// A per-chat setting kept in the Storage Service.
@@ -1340,6 +1345,8 @@ pub enum Event {
     ClockSkew(bool),
     /// The chat folders changed, here or on another device: read them again.
     ChatFoldersChanged,
+    /// The chat colors changed: read them again.
+    ChatColorsChanged,
     Error(String),
     Unlinked,
 }

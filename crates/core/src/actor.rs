@@ -1218,6 +1218,11 @@ impl Actor {
                 Command::ResetUsernameLink => self.reset_username_link().await,
                 Command::SetUsernameLinkColor(color) => self.set_username_link_color(color).await,
                 Command::EditChatFolders(edit) => self.edit_chat_folders(edit).await,
+                Command::EditChatColors(edit) => match self.db.edit_chat_colors(edit).await {
+                    Ok(true) => self.emit(Event::ChatColorsChanged),
+                    Ok(false) => {}
+                    Err(error) => self.error("failed to save the chat colors", error),
+                },
             }
         });
     }
