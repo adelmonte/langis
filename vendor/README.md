@@ -195,6 +195,10 @@ this revision on 2026-11-05. Changes:
   as Signal Desktop's `Provisioner` does. Without it the phone never offers
   to transfer message history. Desktop's `nopni` and `nopni2` are left out:
   linking here still needs the phone number.
+- `src/push_service/error.rs`: a websocket upgrade the server answers with
+  401 or 403 is `ServiceError::Unauthorized`, as the same status is over
+  REST. Upstream returns a generic `WsError`, so a device unlinked from the
+  phone retried the connection forever instead of showing the link screen.
 - `src/groups_v2/mod.rs`: `BannedMember` and `PromotedMember` are exported
   with the other group types (upstream keeps them private to `model`, so a
   `Group`'s `members_banned` couldn't be built in tests).

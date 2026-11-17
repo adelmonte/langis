@@ -223,6 +223,19 @@ impl From<FingerprintError> for ServiceError {
 
 impl From<reqwest_websocket::Error> for ServiceError {
     fn from(error: reqwest_websocket::Error) -> Self {
+        // A rejected upgrade means an unlinked device, as a 401 or 403 does
+        // over REST (`baseline_decode`).
+        if let reqwest_websocket::Error::Handshake(
+            reqwest_websocket::HandshakeError::UnexpectedStatusCode(status),
+        ) = &error
+        {
+            if matches!(
+                *status,
+                reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+            ) {
+                return Self::Unauthorized;
+            }
+        }
         Self::WsError(Box::new(error))
     }
 }
