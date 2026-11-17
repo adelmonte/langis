@@ -20,9 +20,12 @@ jobs:
             libv4l-dev libudev-dev libdbus-1-dev
 
       # protoc at the version mise.toml pins. Dependencies build outside
-      # the repo, where mise's shim doesn't resolve, so point at the binary.
+      # the repo, where mise's shim doesn't resolve, so point at the binary
+      # (some read PROTOC, some search PATH).
       - uses: jdx/mise-action@v2
-      - run: echo "PROTOC=$(mise which protoc)" >> "$GITHUB_ENV"
+      - run: |
+          echo "PROTOC=$(mise which protoc)" >> "$GITHUB_ENV"
+          dirname "$(mise which protoc)" >> "$GITHUB_PATH"
 
       - uses: dtolnay/rust-toolchain@stable
 
