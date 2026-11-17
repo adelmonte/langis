@@ -1,5 +1,8 @@
 //! The camera, on its own thread: each frame goes to RingRTC's video source
-//! (what the other side sees) and, mirrored, to the self-view.
+//! (what the other side sees) and, mirrored, to the self-view. Cameras come
+//! from PipeWire ([`stream`]) where it offers any, else straight from V4L2.
+
+mod stream;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -95,8 +98,13 @@ fn open(index: &CameraIndex) -> anyhow::Result<nokhwa::Camera> {
     Err(last)
 }
 
-/// The cameras there are, by name.
+/// The cameras there are, by name: PipeWire's, its default first, else
+/// V4L2's.
 pub(crate) fn list() -> Vec<crate::Device> {
+    let cameras = stream::cameras();
+    if !cameras.is_empty() {
+        return cameras.into_iter().map(|c| crate::Device { id: c.name.clone(), name: c.name }).collect();
+    }
     nokhwa::query(nokhwa::utils::ApiBackend::Auto)
         .unwrap_or_default()
         .into_iter()
@@ -104,7 +112,17 @@ pub(crate) fn list() -> Vec<crate::Device> {
         .collect()
 }
 
-fn run(stop: &AtomicBool, source: &VideoSource, preview: &FrameSlot, choice: Option<&str>) -> anyhow::Result<()> {
+fn run(stop: &Arc<AtomicBool>, source: &VideoSource, preview: &FrameSlot, choice: Option<&str>) -> anyhow::Result<()> {
+    let cameras = stream::cameras();
+    if let Some(first) = cameras.first() {
+        let node = choice.and_then(|name| cameras.iter().find(|c| c.name == name)).unwrap_or(first);
+        tracing::info!(camera = %node.name, "camera through PipeWire");
+        return stream::run(stop, source, preview, node);
+    }
+    run_v4l2(stop, source, preview, choice)
+}
+
+fn run_v4l2(stop: &AtomicBool, source: &VideoSource, preview: &FrameSlot, choice: Option<&str>) -> anyhow::Result<()> {
     // Some systems ask for camera access the first time (a no-op on V4L2).
     nokhwa::nokhwa_initialize(|granted| tracing::info!(granted, "camera access"));
     let asked = Instant::now();

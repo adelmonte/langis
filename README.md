@@ -30,7 +30,8 @@ Early, but in daily use. What has been checked so far, on Linux:
 Not checked yet:
 
 - Calls on Linux (audio goes through WebRTC's PulseAudio support, which
-  PipeWire also serves; the camera through V4L2).
+  PipeWire also serves; the camera through PipeWire, which covers laptop
+  MIPI cameras through libcamera, else V4L2).
 - Screen sharing in a real call. The capture half (the desktop portal's
   picker, then frames over PipeWire, scaled to the chosen quality) passes
   `scripts/screen-share-test.sh`, which runs it in a throwaway headless
