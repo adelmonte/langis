@@ -69,7 +69,7 @@ while let Some(event) = events.next().await {             // hear back
 
 ## Building
 
-Rust 1.88 or newer, and:
+Rust 1.94 or newer, and:
 
 - `protoc` (Arch: `protobuf`, Debian/Ubuntu: `protobuf-compiler`)
 - `clang` (for BoringSSL's bindings in libsignal)
