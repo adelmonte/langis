@@ -11,7 +11,7 @@ use langis_calls::{
 use langis_store::{CallOutcome, Notice};
 
 use super::*;
-use crate::calling::{Incoming, from_call_message, to_call_message};
+use crate::calling::{Incoming, call_message_kind, from_call_message, to_call_message};
 use crate::{CallStatus, CallUpdate};
 
 /// The call in progress.
@@ -480,6 +480,7 @@ impl Actor {
         while let Some((aci, message)) = sends.next().await {
             let Some(mut manager) = self.manager() else { continue };
             let timestamp = self.next_timestamp() as u64;
+            info!(kind = call_message_kind(&message), destination_device = ?message.destination_device_id, "call message out");
             if let Err(error) = manager.send_message(aci, ContentBody::CallMessage(message), timestamp).await {
                 warn!(%error, "failed to send a call message");
             }
@@ -759,6 +760,7 @@ impl Actor {
         // (`handleCallingMessage`).
         let incoming_calls = self.incoming_calls_on().await;
         for message in incoming {
+            info!(kind = message.kind(), sender_device, "call message in");
             match message {
                 Incoming::Offer { .. } if !incoming_calls => info!("incoming calls are off; ignoring a call offer"),
                 Incoming::Offer { call_id, video, opaque } => {

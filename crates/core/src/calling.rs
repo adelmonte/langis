@@ -52,6 +52,45 @@ pub(crate) enum Incoming {
     Opaque { data: Vec<u8> },
 }
 
+impl Incoming {
+    /// The kind, for the log (no ids or contents).
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Incoming::Offer { .. } => "offer",
+            Incoming::Answer { .. } => "answer",
+            Incoming::Ice { .. } => "ice",
+            Incoming::Hangup { hangup, .. } => match hangup {
+                Hangup::Normal => "hangup normal",
+                Hangup::AcceptedOnAnotherDevice(_) => "hangup accepted elsewhere",
+                Hangup::DeclinedOnAnotherDevice(_) => "hangup declined elsewhere",
+                Hangup::BusyOnAnotherDevice(_) => "hangup busy elsewhere",
+                Hangup::NeedPermission(_) => "hangup need permission",
+            },
+            Incoming::Busy { .. } => "busy",
+            Incoming::Opaque { .. } => "opaque",
+        }
+    }
+}
+
+/// An outgoing call message's kind, for the log (no ids or contents).
+pub(crate) fn call_message_kind(message: &CallMessage) -> &'static str {
+    if message.offer.is_some() {
+        "offer"
+    } else if message.answer.is_some() {
+        "answer"
+    } else if !message.ice_update.is_empty() {
+        "ice"
+    } else if message.hangup.is_some() {
+        "hangup"
+    } else if message.busy.is_some() {
+        "busy"
+    } else if message.opaque.is_some() {
+        "opaque"
+    } else {
+        "other"
+    }
+}
+
 pub(crate) fn from_call_message(message: &CallMessage) -> Vec<Incoming> {
     let mut out = Vec::new();
     if let Some(offer) = &message.offer
