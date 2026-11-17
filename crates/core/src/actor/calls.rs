@@ -312,6 +312,28 @@ impl Actor {
     }
 
     /// Declines, ends, or stops calling.
+    /// Before the backend stops (the app quitting, or asked to end): hangs
+    /// up a 1:1 call or leaves a group call, then waits up to two seconds
+    /// for the hangup to reach the server, so the other side sees the call
+    /// end instead of waiting for it to time out.
+    pub(super) async fn end_calls_before_stopping(self: &Rc<Self>) {
+        let in_call = self.call.borrow().is_some() || self.group_call.borrow().is_some();
+        if !in_call {
+            return;
+        }
+        info!("stopping during a call: hanging up first");
+        self.hang_up().await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            let ended = self.call.borrow().is_none() && self.group_call.borrow().is_none();
+            if ended && self.call_sends_pending.get() == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        warn!("stopped before the call's hangup was sent");
+    }
+
     pub(super) async fn hang_up(&self) {
         if self.call.borrow().is_none() {
             self.end_group_call().await;
@@ -472,7 +494,9 @@ impl Actor {
 
     fn send_call_message(self: &Rc<Self>, recipient: &str, message: CallMessage) {
         let Some(aci) = Aci::parse_from_service_id_string(recipient) else { return };
-        let _ = self.call_sends.unbounded_send((aci, message));
+        if self.call_sends.unbounded_send((aci, message)).is_ok() {
+            self.call_sends_pending.set(self.call_sends_pending.get() + 1);
+        }
     }
 
     /// Sends call messages one at a time, in order.
@@ -484,6 +508,7 @@ impl Actor {
             if let Err(error) = manager.send_message(aci, ContentBody::CallMessage(message), timestamp).await {
                 warn!(%error, "failed to send a call message");
             }
+            self.call_sends_pending.set(self.call_sends_pending.get().saturating_sub(1));
         }
     }
 

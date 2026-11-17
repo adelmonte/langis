@@ -251,8 +251,11 @@ on a poor connection.
 ## 10. Stopping
 
 Call `backend.stop(Duration::from_secs(5))` from a non-async thread before
-the process exits. It finishes the work in hand and closes the databases
-cleanly.
+the process exits. It hangs up a call in progress (waiting up to two
+seconds for the hangup to be sent, so the other side sees the call end),
+finishes the work in hand and closes the databases cleanly. Stop on
+SIGTERM, SIGINT and SIGHUP too: a process killed without stopping leaves
+the other side in the call until it times out.
 
 ## Demo mode
 

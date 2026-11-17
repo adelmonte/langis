@@ -525,6 +525,8 @@ struct Actor {
     call_events: mpsc::UnboundedSender<langis_calls::CallEvent>,
     /// Call messages to send, in RingRTC's order (an offer before its ICE).
     call_sends: mpsc::UnboundedSender<(Aci, presage::proto::CallMessage)>,
+    /// Call messages queued in `call_sends` and not yet sent.
+    call_sends_pending: std::cell::Cell<usize>,
     /// The call's video frames, shared with the UI.
     video: crate::CallVideo,
     /// Identity keys (hex) seen this session, ahead of `SETTING_IDENTITY`.
@@ -676,6 +678,7 @@ pub(crate) async fn run(
         call_choices: RefCell::default(),
         call_events,
         call_sends,
+        call_sends_pending: std::cell::Cell::new(0),
         video,
         avatar_batch_pending: std::cell::Cell::new(false),
         favorite_downloads: Default::default(),
@@ -739,6 +742,7 @@ pub(crate) async fn run(
 
     while let Some(command) = commands.next().await {
         if command == Command::Stop {
+            actor.end_calls_before_stopping().await;
             break;
         }
         actor.clone().handle(command);

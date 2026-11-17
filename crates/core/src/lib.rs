@@ -749,8 +749,10 @@ pub enum Command {
     ClearCallHistory,
     /// Unlinks this device and wipes local state.
     Unlink,
-    /// Stops the backend for good (an account removed from the app): no
-    /// command is taken after it. Its thread ends with what it was doing.
+    /// Stops the backend for good (the app quitting, an account removed
+    /// from the app): no command is taken after it. A call in progress is
+    /// hung up first, waiting up to two seconds for the hangup to be sent.
+    /// Its thread ends with what it was doing.
     Stop,
     /// Stops waiting for the history transfer and continues without it.
     /// Ignored once the import has started.
