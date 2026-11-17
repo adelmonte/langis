@@ -109,7 +109,10 @@ impl ProvisioningPipe {
                         &BASE64_RELAXED.encode(
                             self.provisioning_cipher.public_key().serialize(),
                         ),
-                    );
+                    )
+                    // Desktop's Provisioner: without backup5 the phone
+                    // never offers to transfer message history.
+                    .append_pair("capabilities", "backup5");
 
                 // acknowledge
                 responder
