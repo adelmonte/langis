@@ -1,8 +1,4 @@
 [tools]
 # spqr's build script runs protoc. mise's release binary is self-contained,
-# so a Homebrew abseil upgrade can't break it.
+# so it doesn't depend on the system's protobuf and abseil versions.
 protoc = "36.2"
-
-[tasks.bundle]
-description = "Build release and wrap it in target/release/Vernam.app"
-run = ["cargo build --release", "scripts/bundle.sh"]
