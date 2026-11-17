@@ -1,0 +1,32 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake pkg-config \
+            libpulse-dev libpipewire-0.3-dev libasound2-dev libspeexdsp-dev \
+            libv4l-dev libudev-dev libdbus-1-dev
+
+      # protoc at the version mise.toml pins.
+      - uses: jdx/mise-action@v2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: target/webrtc
+
+      - name: Test
+        run: cargo test --workspace --locked
