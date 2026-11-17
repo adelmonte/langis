@@ -29,6 +29,9 @@ pub(super) struct Node {
     pub name: String,
     /// WirePlumber's `priority.session`: the highest is its default.
     pub priority: i64,
+    /// `api.libcamera.rotation`: how far the sensor is mounted turned
+    /// (0, 90, 180 or 270 degrees), which the picture is turned back by.
+    pub rotation: u32,
 }
 
 /// The cameras PipeWire offers, its default first. Empty without
@@ -79,6 +82,7 @@ fn list() -> anyhow::Result<Vec<Node>> {
                     serial: props.get("object.serial").map(str::to_owned),
                     name: name.to_owned(),
                     priority: props.get("priority.session").and_then(|p| p.parse().ok()).unwrap_or(0),
+                    rotation: props.get("api.libcamera.rotation").and_then(|r| r.parse::<u32>().ok()).map_or(0, |r| r % 360),
                 });
             }
         })
@@ -130,6 +134,7 @@ impl Layout {
 }
 
 struct Pipeline {
+    rotation: u32,
     source: VideoSource,
     preview: FrameSlot,
     layout: Option<Layout>,
@@ -144,7 +149,7 @@ pub(super) fn run(stop: &Arc<AtomicBool>, source: &VideoSource, preview: &FrameS
     let context = pw::context::ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None).context("connecting to PipeWire")?;
     let failure: Rc<RefCell<Option<String>>> = Rc::default();
-    let pipeline = Rc::new(RefCell::new(Pipeline { source: source.clone(), preview: preview.clone(), layout: None, size: (0, 0), frames: 0 }));
+    let pipeline = Rc::new(RefCell::new(Pipeline { rotation: node.rotation, source: source.clone(), preview: preview.clone(), layout: None, size: (0, 0), frames: 0 }));
 
     let mut props = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Video",
@@ -200,6 +205,7 @@ pub(super) fn run(stop: &Arc<AtomicBool>, source: &VideoSource, preview: &FrameS
             let Some((first, stride)) = planes.first() else { return };
             let second = planes.get(1).map(|(bytes, stride)| (bytes.as_slice(), *stride));
             let Some(rgba) = to_rgba(layout, width as usize, height as usize, first, *stride, second) else { return };
+            let (width, height, rgba) = rotate(width, height, rgba, pipeline.rotation);
             pipeline.source.push_frame(VideoFrame::copy_from_slice(width, height, VideoPixelFormat::Rgba, &rgba));
             pipeline.preview.put_rgba(width, height, &rgba, true);
             pipeline.frames += 1;
@@ -289,6 +295,27 @@ fn format_param() -> anyhow::Result<Vec<u8>> {
     Ok(cursor.into_inner())
 }
 
+/// Turns an RGBA picture clockwise by `degrees` (0, 90, 180 or 270).
+fn rotate(width: u32, height: u32, rgba: Vec<u8>, degrees: u32) -> (u32, u32, Vec<u8>) {
+    let (w, h) = (width as usize, height as usize);
+    let pixels = rgba.as_chunks::<4>().0;
+    match degrees {
+        180 => (width, height, pixels.iter().rev().flatten().copied().collect()),
+        90 | 270 => {
+            let mut out = Vec::with_capacity(rgba.len());
+            for y in 0..w {
+                for x in 0..h {
+                    // Clockwise: row y of the result is column y read from the bottom.
+                    let (sx, sy) = if degrees == 90 { (y, h - 1 - x) } else { (w - 1 - y, x) };
+                    out.extend_from_slice(&pixels[sy * w + sx]);
+                }
+            }
+            (height, width, out)
+        }
+        _ => (width, height, rgba),
+    }
+}
+
 /// BT.601 limited range, as webcams send.
 fn yuv(y: u8, u: u8, v: u8) -> [u8; 4] {
     let (c, d, e) = (y as i32 - 16, u as i32 - 128, v as i32 - 128);
@@ -371,6 +398,13 @@ mod tests {
         let nv12 = [126, 126, 126, 126, 128, 128];
         let gray = to_rgba(Layout::Nv12, 2, 2, &nv12, 2, None).unwrap();
         assert!(gray.chunks(4).all(|p| p == [128, 128, 128, 255]), "{gray:?}");
+        // Turned: a 2x1 picture of A, B.
+        let (a, b) = ([1, 1, 1, 1], [2, 2, 2, 2]);
+        let row = [a, b].concat();
+        assert_eq!(rotate(2, 1, row.clone(), 180), (2, 1, [b, a].concat()));
+        assert_eq!(rotate(2, 1, row.clone(), 90), (1, 2, [a, b].concat()));
+        assert_eq!(rotate(2, 1, row.clone(), 270), (1, 2, [b, a].concat()));
+        assert_eq!(rotate(2, 1, row.clone(), 0), (2, 1, row));
         // Too few bytes.
         assert_eq!(to_rgba(Layout::Rgba, 2, 2, &[0; 8], 8, None), None);
     }
