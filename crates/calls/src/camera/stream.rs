@@ -48,16 +48,32 @@ fn list() -> anyhow::Result<Vec<Node>> {
     let mainloop = pw::main_loop::MainLoopRc::new(None).context("starting PipeWire")?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
     let core = context.connect_rc(None).context("connecting to PipeWire")?;
-    let registry = core.get_registry()?;
+    let registry = core.get_registry_rc()?;
     let found: Rc<RefCell<Vec<Node>>> = Rc::default();
+    // The registry lists only a node's main properties; the rest (such as
+    // `api.libcamera.rotation`) come in its info once bound.
+    let bound: Rc<RefCell<Vec<(pw::node::Node, pw::node::NodeListener)>>> = Rc::default();
     let done = Rc::new(Cell::new(false));
-    let pending = core.sync(0)?;
+    // A first round trip lists the nodes, a second brings the bound ones' info.
+    let first = core.sync(0)?;
+    let second = Rc::new(Cell::new(None));
     let _core = core
         .add_listener_local()
         .done({
-            let (done, mainloop) = (done.clone(), mainloop.clone());
+            let (done, mainloop, core, second) = (done.clone(), mainloop.clone(), core.clone(), second.clone());
             move |id, seq| {
-                if id == pw::core::PW_ID_CORE && seq == pending {
+                if id != pw::core::PW_ID_CORE {
+                    return;
+                }
+                if seq == first {
+                    match core.sync(0) {
+                        Ok(next) => second.set(Some(next)),
+                        Err(_) => {
+                            done.set(true);
+                            mainloop.quit();
+                        }
+                    }
+                } else if second.get() == Some(seq) {
                     done.set(true);
                     mainloop.quit();
                 }
@@ -67,7 +83,7 @@ fn list() -> anyhow::Result<Vec<Node>> {
     let _registry = registry
         .add_listener_local()
         .global({
-            let found = found.clone();
+            let (found, bound, registry) = (found.clone(), bound.clone(), registry.clone());
             move |global| {
                 if global.type_ != pw::types::ObjectType::Node {
                     return;
@@ -82,8 +98,25 @@ fn list() -> anyhow::Result<Vec<Node>> {
                     serial: props.get("object.serial").map(str::to_owned),
                     name: name.to_owned(),
                     priority: props.get("priority.session").and_then(|p| p.parse().ok()).unwrap_or(0),
-                    rotation: props.get("api.libcamera.rotation").and_then(|r| r.parse::<u32>().ok()).map_or(0, |r| r % 360),
+                    rotation: 0,
                 });
+                let Ok(node) = registry.bind::<pw::node::Node, _>(global) else { return };
+                let id = global.id;
+                let listener = node
+                    .add_listener_local()
+                    .info({
+                        let found = found.clone();
+                        move |info| {
+                            let rotation = info.props().and_then(|p| p.get("api.libcamera.rotation")).and_then(|r| r.parse::<u32>().ok());
+                            if let Some(rotation) = rotation
+                                && let Some(camera) = found.borrow_mut().iter_mut().find(|c| c.id == id)
+                            {
+                                camera.rotation = rotation % 360;
+                            }
+                        }
+                    })
+                    .register();
+                bound.borrow_mut().push((node, listener));
             }
         })
         .register();
@@ -98,6 +131,7 @@ fn list() -> anyhow::Result<Vec<Node>> {
     while !done.get() {
         mainloop.run();
     }
+    bound.borrow_mut().clear();
     let mut cameras = found.take();
     cameras.sort_by_key(|c| std::cmp::Reverse(c.priority));
     Ok(cameras)
@@ -409,4 +443,5 @@ mod tests {
         assert_eq!(to_rgba(Layout::Rgba, 2, 2, &[0; 8], 8, None), None);
     }
 }
+
 
