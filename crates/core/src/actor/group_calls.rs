@@ -143,6 +143,7 @@ impl GroupCall {
                     video: !p.video_muted,
                     audio: !p.audio_muted,
                     presenting: p.presenting,
+                    speaker_time: p.speaker_time.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64),
                 })
                 .collect(),
             ringer: self.ring.as_ref().map(|(_, _, ringer)| ringer.clone()),

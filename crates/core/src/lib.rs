@@ -1058,6 +1058,10 @@ pub struct CallParticipant {
     pub video: bool,
     pub audio: bool,
     pub presenting: bool,
+    /// When they were last the main speaker, in Unix milliseconds (RingRTC's
+    /// `speaker_time`). Desktop puts presenters first, then the most recent
+    /// speaker, to choose who's large in speaker view.
+    pub speaker_time: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

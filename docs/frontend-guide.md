@@ -210,6 +210,11 @@ meanwhile. Without ffmpeg the original goes.
 An incoming call arrives as `Event::Call(Some(update))` with
 `update.incoming` set: ring.
 
+In a group call, `update.participants` lists the others, one entry per
+device. Each has `video`, `audio` and `presenting`, and `speaker_time`
+(when they were last the main speaker, Unix milliseconds) for ordering
+tiles as Desktop does: presenters first, then the most recent speaker.
+
 Video doesn't go through events. `backend.call_video()` holds the latest
 frames: `remote`, `local` (your camera, mirrored) and `group` (one per
 participant). Each `FrameSlot::latest()` returns a `Frame` with `width`,
