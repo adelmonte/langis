@@ -220,15 +220,20 @@ impl Actor {
 
     /// Downloads what was held back while the chat was a request (Desktop's
     /// `handleReadAndDownloadAttachments`): photos, GIFs and voice messages
-    /// as they'd have downloaded on their own, and long texts.
+    /// as they'd have downloaded on their own, link preview images and
+    /// long texts.
     async fn download_held(self: &Rc<Self>, conversation: &ConversationId) {
         let Some(manager) = self.manager() else { return };
         let messages = self.db.messages(conversation, None, 200).await.unwrap_or_default();
         let mut downloads = Vec::new();
         let mut long_texts = Vec::new();
+        let mut previews = Vec::new();
         for message in messages.iter().rev().filter(|m| m.direction == Direction::Incoming && !m.deleted && m.view_once.is_none()) {
             if message.long_text.as_ref().is_some_and(|l| l.state == langis_store::LongTextState::Failed && l.attempts == 0) {
                 long_texts.push(message.id);
+            }
+            if message.link_preview.as_ref().and_then(|p| p.image.as_ref()).is_some_and(|i| i.local_path.is_none()) {
+                previews.push(message.id);
             }
             for (index, attachment) in message.attachments.iter().enumerate() {
                 if attachment.local_path.is_none() && auto_downloads(attachment) {
@@ -237,10 +242,11 @@ impl Actor {
             }
         }
         downloads.truncate(HELD_DOWNLOADS);
-        if downloads.is_empty() && long_texts.is_empty() {
+        previews.truncate(HELD_DOWNLOADS);
+        if downloads.is_empty() && long_texts.is_empty() && previews.is_empty() {
             return;
         }
-        info!(attachments = downloads.len(), long_texts = long_texts.len(), "downloading what a message request held");
+        info!(attachments = downloads.len(), previews = previews.len(), long_texts = long_texts.len(), "downloading what a message request held");
         let this = self.clone();
         tokio::task::spawn_local(async move {
             for id in long_texts {
@@ -248,6 +254,9 @@ impl Actor {
             }
             for (id, index) in downloads {
                 this.clone().fetch_attachment(id, index).await;
+            }
+            for id in previews {
+                this.fetch_preview_image(id).await;
             }
         });
     }

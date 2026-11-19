@@ -1766,11 +1766,12 @@ impl Actor {
                                 started: false,
                             });
                         }
-                        // A link preview's image is a photo (Desktop's `queuePreviews`).
+                        // A link preview's image comes with the message, whatever the
+                        // auto-download settings say (Desktop's `queuePreviews` in
+                        // ts/util/queueAttachmentDownloads queues it unconditionally).
                         if let Some(pointer) = preview_image.filter(|p| {
                             !held
                                 && p.content_type.as_deref().is_some_and(|c| c.starts_with("image/"))
-                                && crate::auto_download::current().photos
                                 && p.size.is_some_and(|size| crate::remote_config().auto_downloads(u64::from(size)))
                         }) {
                             let sent_at = message.sent_at;
@@ -5861,6 +5862,35 @@ impl Actor {
             return self.error("attachment unavailable", "no such attachment");
         };
         self.download(&manager, message.conversation_id, message_id, message.sent_at, index, &pointer).await;
+    }
+
+    /// Downloads a message's link preview image from its stored message,
+    /// for one held back while its chat was a message request.
+    pub(super) async fn fetch_preview_image(self: &Rc<Self>, message_id: i64) {
+        let Some(manager) = self.manager() else { return };
+        let Some(message) = self.db.message(message_id).await.ok().flatten() else { return };
+        if message.link_preview.as_ref().and_then(|p| p.image.as_ref()).is_none_or(|i| i.local_path.is_some()) {
+            return;
+        }
+        let thread = match message.conversation_id.as_group() {
+            Some(key) => match key.try_into() {
+                Ok(key) => Thread::Group(key),
+                Err(_) => return,
+            },
+            None => match mapping::service_id_of(&message.conversation_id) {
+                Some(sid) => Thread::Contact(sid),
+                None => return,
+            },
+        };
+        let content = match manager.store().message(&thread, message.sent_at as u64).await {
+            Ok(Some(content)) => content,
+            Ok(None) => return debug!(message_id, "no stored message for a link preview image"),
+            Err(error) => return debug!(%error, "couldn't read the stored message for a link preview image"),
+        };
+        let pointer = data_message_of(&content.body).and_then(|dm| dm.preview.first()).and_then(|p| p.image.clone());
+        if let Some(pointer) = pointer {
+            self.download_preview_image(&manager, message.conversation_id, message_id, message.sent_at, &pointer).await;
+        }
     }
 
     /// Notes that a message's whole text came as an attachment, and
