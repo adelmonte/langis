@@ -188,7 +188,9 @@ That also tells the phone and, with read receipts on, the sender.
 ## 8. Attachments
 
 A message's `attachments` list each file's type, size and dimensions.
-`local_path` is set once the file is downloaded and decrypted. By default
+`local_path` is set once the file is downloaded and decrypted; until
+then a photo or video's `blurhash`, when the sender gave one, can be drawn
+blurred in its place. By default
 everything downloads on its own; `Command::SetAutoDownload` turns that off
 per kind (photos, videos, audio, documents), and stickers and short voice
 messages always come. Anything not downloaded waits for

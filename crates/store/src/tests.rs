@@ -286,6 +286,7 @@ async fn delete_edit_attachments_and_search() {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     }];
     m.quote = Some(Quote { author: None, author_name: "You".into(), sent_at: 0, text: "q".into(), thumbnail: None, attachment: None, story: false });
     let id = db.insert_message(&m).await.unwrap();
@@ -365,6 +366,7 @@ async fn the_next_audio_is_the_chats_next_message_with_audio() {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         }];
         m
     };
@@ -506,6 +508,7 @@ async fn attachment_only_preview() {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     }];
     db.insert_message(&m).await.unwrap();
     assert_eq!(
@@ -672,6 +675,7 @@ async fn a_preview_image_is_recorded_only_where_it_still_belongs() {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     };
     let preview = |image| LinkPreview { url: "https://example.com".into(), title: None, description: None, date: None, image };
     let with = db.insert_message(&NewMessage { link_preview: Some(preview(Some(image))), ..incoming("d:b", "b", 1, "a") }).await.unwrap();
@@ -1047,6 +1051,7 @@ async fn media_messages_are_those_with_attachments_or_previews() {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     }];
     let photo = db.insert_message(&photo).await.unwrap();
     let media: Vec<i64> = db.media_messages(&conv("d:a"), 10).await.unwrap().iter().map(|m| m.id).collect();
@@ -1073,6 +1078,7 @@ async fn media_pages_go_back_from_a_message() {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         }];
         ids.push(db.insert_message(&m).await.unwrap());
     }
@@ -1776,6 +1782,7 @@ async fn attachments_are_named_as_desktop_names_them() {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     };
     let gif = AttachmentMeta { gif: true, ..meta("video/mp4") };
     assert_eq!(attachment_preview(&gif), "🎡 GIF", "a GIF is an MP4 with the GIF flag");
@@ -1831,6 +1838,7 @@ async fn stories_last_a_day_and_keep_views_and_replies() {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         },
         caption: String::new(),
         styles: Vec::new(),
@@ -2204,6 +2212,7 @@ fn photo(path: Option<&str>) -> AttachmentMeta {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: None,
     }
 }
 
@@ -2869,6 +2878,7 @@ async fn message_content_previews_and_gift_badge_states() {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         }),
         ..Default::default()
     };

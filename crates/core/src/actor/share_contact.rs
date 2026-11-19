@@ -96,6 +96,7 @@ impl Actor {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         })
     }
 

@@ -3032,6 +3032,7 @@ impl Actor {
             thumbnail_path: None,
             sticker_pack: None,
             transcode: false,
+            blurhash: None,
         };
         let Some((id, data, timestamp)) = self.store_outgoing(&conversation, String::new(), quote, vec![meta], None).await
         else {
@@ -3112,6 +3113,7 @@ impl Actor {
                 sticker_id: Some(sticker.id),
             }),
             transcode: false,
+            blurhash: None,
         };
         let Some((id, mut data, timestamp)) = self.store_outgoing(&conversation, String::new(), quote, vec![meta], None).await
         else {
@@ -4276,6 +4278,7 @@ impl Actor {
                         thumbnail_path: None,
                         sticker_pack: None,
                         transcode: false,
+                        blurhash: None,
                     })
                 }
             }
@@ -4360,6 +4363,7 @@ impl Actor {
                 thumbnail_path: None,
                 sticker_pack: None,
                 transcode: false,
+                blurhash: None,
             });
             files.push(Upload { path, file_name: image.file_name, file_type: None, voice: false, transcode: None });
         }
@@ -4446,6 +4450,7 @@ impl Actor {
             thumbnail_path: None,
             sticker_pack: None,
             transcode,
+            blurhash: None,
         };
         let wire_caption = caption.trim_end().to_owned();
         let wire_styles = mapping::wire_styles(&wire_caption, &styles);

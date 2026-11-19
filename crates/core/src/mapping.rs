@@ -998,6 +998,7 @@ pub fn attachment_meta(p: &AttachmentPointer) -> AttachmentMeta {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
+        blurhash: p.blur_hash.clone().filter(|b| !b.is_empty()),
     }
 }
 

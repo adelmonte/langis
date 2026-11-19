@@ -315,6 +315,10 @@ pub struct AttachmentMeta {
     /// `transcodingTargetQuality`), until that's been tried.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub transcode: bool,
+    /// The sender's blurhash of a photo or video, drawn blurred until it's
+    /// downloaded (Desktop's `blurHash`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blurhash: Option<String>,
 }
 
 /// A sticker's pack, by its hex id and key (as `StickerPackRow` has them),
