@@ -75,6 +75,8 @@ pub enum Error<S: std::error::Error> {
     UnexpectedAttachmentChecksum,
     #[error("attachment larger than {0} bytes")]
     AttachmentTooLarge(u64),
+    #[error("attachment download cancelled")]
+    AttachmentCancelled,
     #[error("Unverified registration session (i.e. wrong verification code)")]
     UnverifiedRegistrationSession,
     #[error("profile cipher error")]

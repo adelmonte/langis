@@ -1710,6 +1710,18 @@ impl<S: Store> Manager<S, Registered> {
         &self,
         attachment_pointer: &AttachmentPointer,
     ) -> Result<Vec<u8>, Error<S::Error>> {
+        self.get_attachment_with_progress(attachment_pointer, |_| true)
+            .await
+    }
+
+    /// langis: [`Self::get_attachment`], calling `progress` with the bytes
+    /// received so far as they come; it returning `false` stops the
+    /// download with [`Error::AttachmentCancelled`].
+    pub async fn get_attachment_with_progress(
+        &self,
+        attachment_pointer: &AttachmentPointer,
+        mut progress: impl FnMut(u64) -> bool,
+    ) -> Result<Vec<u8>, Error<S::Error>> {
         let expected_digest = attachment_pointer
             .digest
             .as_ref()
@@ -1727,10 +1739,19 @@ impl<S: Store> Manager<S, Registered> {
 
         // We need the whole file for the crypto to check out
         let mut ciphertext = Vec::with_capacity(plaintext_len.unwrap_or(0).min(MAX_PREALLOCATED_BYTES));
-        let size_bytes = (&mut attachment_stream.stream)
-            .take(MAX_CIPHERTEXT_BYTES + 1)
-            .read_to_end(&mut ciphertext)
-            .await?;
+        let mut limited = (&mut attachment_stream.stream).take(MAX_CIPHERTEXT_BYTES + 1);
+        let mut chunk = vec![0u8; 64 * 1024];
+        loop {
+            let n = limited.read(&mut chunk).await?;
+            if n == 0 {
+                break;
+            }
+            ciphertext.extend_from_slice(&chunk[..n]);
+            if !progress(ciphertext.len() as u64) {
+                return Err(Error::AttachmentCancelled);
+            }
+        }
+        let size_bytes = ciphertext.len();
         if size_bytes as u64 > MAX_CIPHERTEXT_BYTES {
             return Err(Error::AttachmentTooLarge(MAX_CIPHERTEXT_BYTES));
         }

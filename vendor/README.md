@@ -29,6 +29,11 @@ Changes:
   app's Storage Service sync makes those chats and fetches the groups a
   bounded number at a time. The store keeps upstream's `left_groups`
   methods, which presage-store-sqlite implements.
+- `src/manager/registered.rs`, `src/errors.rs`:
+  `Manager::get_attachment_with_progress` downloads an attachment in 64 KiB
+  reads, reporting the bytes received after each and stopping with
+  `Error::AttachmentCancelled` when told to, for a frontend's progress and
+  cancel; `get_attachment` is it without either.
 - `src/manager/registered.rs`: the receiving websocket sends
   `X-Signal-Receive-Stories: true`, so the server delivers stories (upstream
   hard-codes `false`).

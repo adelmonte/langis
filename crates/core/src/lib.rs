@@ -542,6 +542,9 @@ pub enum Command {
     /// Downloads every attachment of `message_id` not yet downloaded, one at
     /// a time (Desktop's "Download N items" on a grid).
     FetchAttachments { message_id: i64 },
+    /// Stops attachment `index` of `message_id` downloading (Desktop's
+    /// cancel on a download in progress); it's left not downloaded.
+    CancelDownload { message_id: i64, index: usize },
     /// Opens their view-once message, its one time: answered with
     /// `Event::ViewOnceOpened`, after which it's erased.
     OpenViewOnce { message_id: i64 },
@@ -1321,6 +1324,10 @@ pub enum Event {
     RecipientFound { query: String, result: Result<langis_store::DirectoryEntry, String> },
     /// Answer to `Command::FetchLinkPreview` (`None`: no preview for it).
     LinkPreview { url: String, preview: Option<LinkPreviewDraft> },
+    /// An attachment downloading: bytes received of `total` (the sender's
+    /// size, 0 if unknown), a few times a second. `MessageChanged` follows
+    /// when it's done; a cancelled or failed one ends with `received` 0.
+    DownloadProgress { message_id: i64, index: usize, received: u64, total: u64 },
     /// Stored author names changed: `(service id, name)` pairs. Loaded
     /// messages and quotes by these authors should take the new names.
     AuthorNamesChanged(Vec<(String, String)>),

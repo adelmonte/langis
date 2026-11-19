@@ -196,6 +196,9 @@ per kind (photos, videos, audio, documents), and stickers and short voice
 messages always come. Anything not downloaded waits for
 `Command::FetchAttachment { message_id, index }`. `MessageChanged` follows
 when the file is ready.
+While one downloads, `Event::DownloadProgress` reports the bytes received a
+few times a second, and `Command::CancelDownload` stops it (it ends with
+`received` 0). Files from transferred history download without progress.
 
 Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
 upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending

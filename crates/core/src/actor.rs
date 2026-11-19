@@ -471,6 +471,8 @@ struct Actor {
     /// Each group's revision when its details (members, admins, access) were
     /// last read, to read them again when a message names a newer one.
     group_revisions: RefCell<HashMap<ConversationId, u32>>,
+    /// Downloads asked to stop (message id, attachment index).
+    cancelled_downloads: RefCell<HashSet<(i64, usize)>>,
     /// One group change at a time per group (`group_admin.rs`).
     group_locks: RefCell<HashMap<ConversationId, std::sync::Arc<tokio::sync::Mutex<()>>>>,
     /// Held while a group's stored state is read and written again.
@@ -647,6 +649,7 @@ pub(crate) async fn run(
         names: RefCell::default(),
         titled: RefCell::default(),
         group_revisions: RefCell::default(),
+        cancelled_downloads: RefCell::default(),
         group_locks: RefCell::default(),
         group_state_locks: RefCell::default(),
         group_fetches: RefCell::default(),
@@ -1072,6 +1075,9 @@ impl Actor {
                 Command::RetryDeleteForEveryone { message_id } => self.retry_delete_for_everyone(message_id).await,
                 Command::FetchAttachment { message_id, index } => {
                     self.fetch_attachment(message_id, index).await
+                }
+                Command::CancelDownload { message_id, index } => {
+                    self.cancelled_downloads.borrow_mut().insert((message_id, index));
                 }
                 Command::FetchAttachments { message_id } => {
                     let Some(message) = self.db.message(message_id).await.ok().flatten() else { return };
@@ -6056,9 +6062,32 @@ impl Actor {
         if crate::remote_config().too_big_to_receive(size) {
             return info!(size, "not downloading an attachment over the receive limit");
         }
-        let bytes = match manager.get_attachment(pointer).await {
+        // Progress for the frontend, at most every 250ms, and a stop when
+        // it's cancelled.
+        self.cancelled_downloads.borrow_mut().remove(&(message_id, index));
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let progress = |received: u64| {
+            if self.cancelled_downloads.borrow().contains(&(message_id, index)) {
+                return false;
+            }
+            if last.elapsed() >= std::time::Duration::from_millis(250) {
+                last = std::time::Instant::now();
+                self.emit(Event::DownloadProgress { message_id, index, received, total: size });
+            }
+            true
+        };
+        let fetched = manager.get_attachment_with_progress(pointer, progress).await;
+        let cancelled = self.cancelled_downloads.borrow_mut().remove(&(message_id, index));
+        let bytes = match fetched {
             Ok(bytes) => bytes,
-            Err(error) => return self.error("failed to download attachment", error),
+            Err(_) if cancelled => {
+                self.emit(Event::DownloadProgress { message_id, index, received: 0, total: size });
+                return info!(message_id, index, "attachment download cancelled");
+            }
+            Err(error) => {
+                self.emit(Event::DownloadProgress { message_id, index, received: 0, total: size });
+                return self.error("failed to download attachment", error);
+            }
         };
         let ext = extension_for(pointer);
         let path = self
