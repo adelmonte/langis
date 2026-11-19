@@ -826,6 +826,8 @@ pub enum GroupNotice {
     InfoAccess { admins_only: bool },
     /// Who may add members.
     MemberAccess { admins_only: bool },
+    /// Who may set member labels (Desktop's `memberLabelAccess`).
+    LabelAccess { admins_only: bool },
     AnnouncementsOnly { on: bool },
     Ended,
     /// `member` joined by the group link (Desktop's `member-add-from-link`).

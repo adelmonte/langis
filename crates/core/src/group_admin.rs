@@ -105,6 +105,10 @@ pub enum Permission {
     AddMembers { admins_only: bool },
     /// Who can send messages (`announcementsOnly`).
     SendMessages { admins_only: bool },
+    /// Who can set member labels (`memberLabelAccess`, Desktop's
+    /// `buildAccessControlMemberLabelChange`). Making it admins only takes
+    /// non-admins' labels away, as Desktop warns.
+    SetMemberLabels { admins_only: bool },
 }
 
 /// Desktop's `buildAccessControlAttributesChange`,
@@ -121,6 +125,9 @@ pub fn set_permission(permission: Permission, actions: &mut Actions) {
         }
         Permission::SendMessages { admins_only } => {
             actions.modify_announcements_only = Some(action::ModifyAnnouncementsOnlyAction { announcements_only: admins_only })
+        }
+        Permission::SetMemberLabels { admins_only } => {
+            actions.modify_member_label_access = Some(action::ModifyMemberLabelAccessControlAction { member_label_access: access(admins_only) })
         }
     }
 }

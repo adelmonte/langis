@@ -475,6 +475,7 @@ pub fn summarize_group_change(
             }
             GroupChange::AttributeAccess(access) => GroupNotice::InfoAccess { admins_only: admins_only(access) },
             GroupChange::MemberAccess(access) => GroupNotice::MemberAccess { admins_only: admins_only(access) },
+            GroupChange::MemberLabelAccess(access) => GroupNotice::LabelAccess { admins_only: admins_only(access) },
             GroupChange::AnnouncementOnly(on) => {
                 summary.announcements_only = Some(*on);
                 GroupNotice::AnnouncementsOnly { on: *on }

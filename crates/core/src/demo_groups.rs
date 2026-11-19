@@ -123,6 +123,10 @@ pub(crate) async fn handle(db: &AppDb, data_dir: &Path, command: &Command, emit:
                     state.announcements_only = admins_only;
                     GroupNotice::AnnouncementsOnly { on: admins_only }
                 }
+                Permission::SetMemberLabels { admins_only } => {
+                    state.labels_admins_only = admins_only;
+                    GroupNotice::LabelAccess { admins_only }
+                }
             };
             save(conversation.clone(), ConversationUpdate { group_state: Some(state), ..Default::default() }).await;
             notice(conversation, change).await;

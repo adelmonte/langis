@@ -446,6 +446,10 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
             person(&u.updaterAci)?,
             GroupNotice::MemberAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
         ),
+        U::GroupMemberLabelAccessLevelChangeUpdate(u) => group(
+            person(&u.updaterAci)?,
+            GroupNotice::LabelAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
+        ),
         U::GroupAttributesAccessLevelChangeUpdate(u) => group(
             person(&u.updaterAci)?,
             GroupNotice::InfoAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
