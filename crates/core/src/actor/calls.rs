@@ -90,7 +90,7 @@ impl Actor {
         let emit = move |event: CallEvent| {
             let _ = events.unbounded_send(event);
         };
-        match langis_calls::Calls::new(emit, &me, self.video.local.clone(), self.video.remote.clone(), self.video.group.clone()) {
+        match langis_calls::Calls::new(emit, &me, self.video.local.clone(), self.video.remote.clone(), self.video.group.clone(), self.video.levels.clone()) {
             Ok(mut calls) => {
                 // The devices chosen in Settings (read ahead, in `load_call_choices`).
                 let choices = self.call_choices.borrow().clone();

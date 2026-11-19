@@ -14,7 +14,7 @@ mod group;
 mod link;
 mod screen;
 
-pub use group::{GroupEnd, GroupEvent, GroupFrames, Participant, Peek, Ring, SFU_URL, call_id_from_era};
+pub use group::{AudioLevels, GroupEnd, GroupEvent, GroupFrames, Participant, Peek, Ring, SFU_URL, call_id_from_era};
 pub use link::{
     LINK_PREFIX, LinkClient, LinkRestrictions, LinkResult, LinkState, Responder, link_url, new_link_keys, parse_link,
     room_id, root_key_string,
@@ -222,6 +222,7 @@ type Emit = Arc<dyn Fn(CallEvent) + Send + Sync>;
 #[derive(Clone)]
 struct Handler {
     emit: Emit,
+    levels: AudioLevels,
 }
 
 impl SignalingSender for Handler {
@@ -343,6 +344,11 @@ impl GroupUpdateHandler for Handler {
             }
             GroupUpdate::RaisedHands(client_id, hands) => GroupEvent::RaisedHands { client_id, hands },
             GroupUpdate::RemoteMute { client_id, mute_source } => GroupEvent::MutedBy { client_id, source: mute_source },
+            // Kept for the frontend to poll, not sent as events.
+            GroupUpdate::AudioLevels(_, captured, received) => {
+                self.levels.set(captured, received.into_iter().map(|r| (r.demux_id, r.level)));
+                return Ok(());
+            }
             GroupUpdate::ObservedRemoteMute { client_id, mute_source, mute_target } => {
                 GroupEvent::ObservedMute { client_id, source: mute_source, target: mute_target }
             }
@@ -435,9 +441,10 @@ impl Calls {
         local: FrameSlot,
         remote: FrameSlot,
         group_frames: GroupFrames,
+        levels: AudioLevels,
     ) -> anyhow::Result<Self> {
         let emit: Emit = Arc::new(emit);
-        let handler = Handler { emit: emit.clone() };
+        let handler = Handler { emit: emit.clone(), levels };
         let mut factory = PeerConnectionFactory::new(&pcf::AudioConfig::default(), false, "", None)
             .map_err(|e| anyhow!("{e}"))
             .context("starting WebRTC")?;
@@ -676,7 +683,8 @@ impl Calls {
             group_id,
             sfu_url: SFU_URL.to_owned(),
             hkdf_extra_info: Vec::new(),
-            audio_levels_interval: None,
+            // Desktop asks every 200ms for its speaking indicators.
+            audio_levels_interval: Some(std::time::Duration::from_millis(200)),
             dred_duration: 0,
             svc_config: None,
             peer_connection_factory: None,
@@ -798,7 +806,8 @@ impl Calls {
             root_key,
             admin_passkey,
             hkdf_extra_info: Vec::new(),
-            audio_levels_interval: None,
+            // Desktop asks every 200ms for its speaking indicators.
+            audio_levels_interval: Some(std::time::Duration::from_millis(200)),
             dred_duration: 0,
             svc_config: None,
             peer_connection_factory: None,

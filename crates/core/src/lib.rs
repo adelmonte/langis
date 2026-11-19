@@ -1129,6 +1129,8 @@ pub struct CallVideo {
     pub local: langis_calls::FrameSlot,
     /// A group call's participants' frames.
     pub group: langis_calls::GroupFrames,
+    /// How loud each participant is, and we are (poll it with the frames).
+    pub levels: langis_calls::AudioLevels,
 }
 
 pub use langis_calls::{Frame, FrameSlot};

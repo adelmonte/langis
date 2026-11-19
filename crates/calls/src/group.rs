@@ -181,6 +181,38 @@ pub(crate) fn joined(state: &JoinState) -> Option<DemuxId> {
 #[derive(Clone, Default)]
 pub struct GroupFrames(Arc<Mutex<HashMap<DemuxId, FrameSlot>>>);
 
+/// How loud each participant of a group call is, and we are: RingRTC's
+/// audio levels (0 to 32767), a few times a second, for a frontend's
+/// speaking indicators (Desktop's `audioLevel` on each tile). Read it like
+/// the frames: poll it each frame drawn.
+#[derive(Clone, Default)]
+pub struct AudioLevels(Arc<Mutex<(u16, HashMap<DemuxId, u16>)>>);
+
+impl AudioLevels {
+    /// A participant's level from 0 to 1 (0 when unknown).
+    pub fn level(&self, demux_id: DemuxId) -> f32 {
+        self.0.lock().ok().and_then(|l| l.1.get(&demux_id).copied()).map_or(0., |v| f32::from(v) / 32767.)
+    }
+
+    /// Our microphone's level from 0 to 1.
+    pub fn local(&self) -> f32 {
+        self.0.lock().map_or(0., |l| f32::from(l.0) / 32767.)
+    }
+
+    pub(crate) fn set(&self, captured: u16, received: impl IntoIterator<Item = (DemuxId, u16)>) {
+        if let Ok(mut levels) = self.0.lock() {
+            levels.0 = captured;
+            levels.1 = received.into_iter().collect();
+        }
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut levels) = self.0.lock() {
+            *levels = Default::default();
+        }
+    }
+}
+
 impl GroupFrames {
     pub fn slot(&self, demux_id: DemuxId) -> FrameSlot {
         self.0.lock().map(|mut map| map.entry(demux_id).or_default().clone()).unwrap_or_default()

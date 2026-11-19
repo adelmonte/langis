@@ -227,6 +227,10 @@ participant). Each `FrameSlot::latest()` returns a `Frame` with `width`,
 `height`, BGRA pixels and a `seq` number. Poll it each frame you draw, and
 upload the pixels to a texture only when `seq` changed.
 
+`call_video().levels` holds a group call's audio levels, refreshed every
+200ms: `level(demux_id)` for a participant and `local()` for us, each 0 to
+1. Poll it as you draw, for speaking indicators.
+
 ### Screen sharing
 
 Sharing goes through the XDG desktop portal, so the desktop (GNOME, KDE,
