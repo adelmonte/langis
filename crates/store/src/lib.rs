@@ -798,6 +798,19 @@ pub enum Notice {
     /// Desktop's `delivery-issue`: something `who` sent couldn't be
     /// decrypted and won't be sent again.
     DeliveryIssue { who: String },
+    /// Desktop's `joined-signal-notification`: `who` is on Signal now.
+    JoinedSignal { who: String },
+    /// Desktop's `end-session`: the secure session was reset.
+    SessionEnded,
+    /// Desktop's `conversation-merge`: our history with `who` and the one
+    /// with `phone` (when known) became one chat.
+    Merged { who: String, phone: Option<String> },
+    /// Desktop's `phone-number-discovery` (a session switchover): `phone`
+    /// belongs to `who`.
+    NumberIsTheirs { who: String, phone: String },
+    /// Desktop's `title-transition-notification`: we started this chat
+    /// with `who` when they showed as `previous` (a number or username).
+    StartedWith { who: String, previous: String },
     /// Desktop's unsupported message: `who` (`None`: one of our devices)
     /// sent something that needs a newer protocol version.
     UnsupportedMessage {

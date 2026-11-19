@@ -397,6 +397,8 @@ fn update_notices(
                 Ok(Type::IDENTITY_DEFAULT) => author.clone().flatten().map(|who| Notice::Verified { who, verified: false, local: false }),
                 Ok(Type::CHANGE_NUMBER) => subject().map(|who| Notice::NumberChanged { who }),
                 Ok(Type::CHAT_SESSION_REFRESH) => Some(Notice::SessionRefreshed),
+                Ok(Type::JOINED_SIGNAL) => subject().map(|who| Notice::JoinedSignal { who }),
+                Ok(Type::END_SESSION) => Some(Notice::SessionEnded),
                 Ok(Type::BAD_DECRYPT) => subject().map(|who| Notice::DeliveryIssue { who }),
                 Ok(Type::UNSUPPORTED_PROTOCOL_MESSAGE) => author.clone().map(|who| Notice::UnsupportedMessage { who }),
                 _ => None,
@@ -416,6 +418,24 @@ fn update_notices(
             _ => Vec::new(),
         },
         Some(Update::GroupChange(change)) => change.updates.iter().filter_map(|u| group_update_notice(u, me)).collect(),
+        Some(Update::ThreadMerge(merge)) => subject()
+            .map(|who| Notice::Merged { who, phone: (merge.previousE164 > 0).then(|| format!("+{}", merge.previousE164)) })
+            .into_iter()
+            .collect(),
+        Some(Update::SessionSwitchover(switch)) => subject()
+            .filter(|_| switch.e164 > 0)
+            .map(|who| Notice::NumberIsTheirs { who, phone: format!("+{}", switch.e164) })
+            .into_iter()
+            .collect(),
+        Some(Update::LearnedProfileChange(learned)) => {
+            use proto::learned_profile_chat_update::PreviousName;
+            let previous = match &learned.previousName {
+                Some(PreviousName::E164(e164)) if *e164 > 0 => Some(format!("+{e164}")),
+                Some(PreviousName::Username(name) | PreviousName::SharedName(name)) if !name.is_empty() => Some(name.clone()),
+                _ => None,
+            };
+            subject().zip(previous).map(|(who, previous)| Notice::StartedWith { who, previous }).into_iter().collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -1771,6 +1791,17 @@ mod tests {
             update_notices(update, author, chat, &me, nobody)
         };
         let theirs = Some(Some(alice.clone()));
+        assert_eq!(notices(&simple(Type::JOINED_SIGNAL), None, &direct), [Notice::JoinedSignal { who: alice.clone() }]);
+        assert_eq!(notices(&simple(Type::END_SESSION), None, &direct), [Notice::SessionEnded]);
+        let mut merge = proto::ThreadMergeChatUpdate::new();
+        merge.previousE164 = 15555550100;
+        assert_eq!(notices(&wrap(Update::ThreadMerge(merge)), None, &direct), [Notice::Merged { who: alice.clone(), phone: Some("+15555550100".into()) }]);
+        let mut switch = proto::SessionSwitchoverChatUpdate::new();
+        switch.e164 = 15555550100;
+        assert_eq!(notices(&wrap(Update::SessionSwitchover(switch)), None, &direct), [Notice::NumberIsTheirs { who: alice.clone(), phone: "+15555550100".into() }]);
+        let mut learned = proto::LearnedProfileChatUpdate::new();
+        learned.previousName = Some(proto::learned_profile_chat_update::PreviousName::Username("alice.01".into()));
+        assert_eq!(notices(&wrap(Update::LearnedProfileChange(learned)), None, &direct), [Notice::StartedWith { who: alice.clone(), previous: "alice.01".into() }]);
         assert_eq!(notices(&simple(Type::IDENTITY_UPDATE), None, &direct), [Notice::SafetyNumberChanged { who: alice.clone() }]);
         assert_eq!(notices(&simple(Type::IDENTITY_UPDATE), theirs.clone(), &group), [Notice::SafetyNumberChanged { who: alice.clone() }]);
         assert_eq!(
@@ -1788,7 +1819,8 @@ mod tests {
             notices(&simple(Type::UNSUPPORTED_PROTOCOL_MESSAGE), Some(None), &direct),
             [Notice::UnsupportedMessage { who: None }]
         );
-        assert_eq!(notices(&simple(Type::JOINED_SIGNAL), theirs.clone(), &direct), []);
+        // Desktop imports it as `joined-signal-notification`.
+        assert_eq!(notices(&simple(Type::JOINED_SIGNAL), theirs.clone(), &direct), [Notice::JoinedSignal { who: alice.clone() }]);
 
         let mut profile = proto::ProfileChangeChatUpdate::new();
         profile.previousName = "Al".into();
