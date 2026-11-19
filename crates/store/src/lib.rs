@@ -2371,6 +2371,24 @@ impl AppDb {
         rows.iter().map(message_from_row).collect()
     }
 
+    /// The page of [`AppDb::media_messages`] older than message `before_id`,
+    /// newest first, for paging back through a chat's media.
+    pub async fn media_messages_before(&self, conversation: &ConversationId, before_id: i64, limit: u32) -> Result<Vec<Message>> {
+        let rows = sqlx::query(AssertSqlSafe(format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages \
+             WHERE conversation_id = ?1 AND deleted = 0 AND notice IS NULL AND view_once IS NULL \
+               AND (attachments != '[]' OR link_preview IS NOT NULL) \
+               AND (sent_at, id) < (SELECT sent_at, id FROM messages WHERE id = ?2) \
+             ORDER BY sent_at DESC, id DESC LIMIT ?3"
+        )))
+        .bind(&conversation.0)
+        .bind(before_id)
+        .bind(i64::from(limit))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(message_from_row).collect()
+    }
+
     /// The next message after `after_id` in its chat with audio (a voice
     /// message or an audio file), for Desktop's consecutive playback
     /// (`getNextVoiceNote`: the chat's next audio attachment, newer).

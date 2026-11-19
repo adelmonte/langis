@@ -117,6 +117,7 @@ The reads you will use most:
 | `conversation(&id)` | One chat. |
 | `messages(&id, before, limit)` | A page of messages, oldest first (the newest at the end). Pass the oldest `id` you have as `before` to page back. |
 | `messages_around`, `messages_after` | Pages around a search hit or after a point. |
+| `media_messages`, `media_messages_before` | A chat's photos, videos, files and links, newest first, a page at a time. |
 | `message(id)` | One message, after `MessageChanged` names it. |
 | `display_names()` | Names for authors and mentions. |
 | `search_messages`, `search_conversation`, `search_directory` | Search. |

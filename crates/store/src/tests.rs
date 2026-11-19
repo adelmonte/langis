@@ -1054,6 +1054,37 @@ async fn media_messages_are_those_with_attachments_or_previews() {
 }
 
 #[tokio::test]
+async fn media_pages_go_back_from_a_message() {
+    let db = test_db().await;
+    let mut ids = Vec::new();
+    for n in 1..=5 {
+        let mut m = incoming("d:a", "a", n * 10, "");
+        m.attachments = vec![AttachmentMeta {
+            content_type: "image/png".into(),
+            file_name: None,
+            size: 1,
+            width: Some(1),
+            height: Some(1),
+            local_path: Some("/tmp/x.png".into()),
+            sticker: false,
+            gif: false,
+            voice: false,
+            remote: None,
+            thumbnail_path: None,
+            sticker_pack: None,
+            transcode: false,
+        }];
+        ids.push(db.insert_message(&m).await.unwrap());
+    }
+    let first: Vec<i64> = db.media_messages(&conv("d:a"), 2).await.unwrap().iter().map(|m| m.id).collect();
+    assert_eq!(first, vec![ids[4], ids[3]]);
+    let next: Vec<i64> = db.media_messages_before(&conv("d:a"), ids[3], 2).await.unwrap().iter().map(|m| m.id).collect();
+    assert_eq!(next, vec![ids[2], ids[1]]);
+    let last: Vec<i64> = db.media_messages_before(&conv("d:a"), ids[1], 2).await.unwrap().iter().map(|m| m.id).collect();
+    assert_eq!(last, vec![ids[0]]);
+}
+
+#[tokio::test]
 async fn people_are_direct_chats_and_contacts() {
     let db = test_db().await;
     db.upsert_conversation(&conv("d:a"), ConversationUpdate { kind: Some(ConversationKind::Direct), title: Some("Alice".into()), ..Default::default() })
