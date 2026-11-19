@@ -127,10 +127,10 @@ backend keeps the store, Signal's servers and your other devices in step,
 and a direct write skips all of that. The exceptions are frontend-only
 state: drafts (`set_draft`, `set_draft_with_styles`), emoji use for a recent
 list (`record_emoji_use`), and your own preferences in `set_setting` under a
-prefix of your own (for example `ui.`). The theme and the two local call
-settings (incoming calls, always relay) are the core's keys: change them
-with `Command::SetLocalSetting`, and read the theme back with
-`Theme::from_setting(db.setting(SETTING_THEME))`.
+prefix of your own (for example `ui.`). The theme, the two local call
+settings (incoming calls, always relay), image optimization and the Giphy
+key are the core's keys: change them with `Command::SetLocalSetting`, and
+read the theme back with `Theme::from_setting(db.setting(SETTING_THEME))`.
 
 ## 6. Events say what to re-read
 

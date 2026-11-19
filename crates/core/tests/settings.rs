@@ -72,6 +72,8 @@ fn local_settings_are_saved() {
     backend.send(Command::SetLocalSetting(LocalSetting::Theme(Theme::Dark)));
     backend.send(Command::SetLocalSetting(LocalSetting::IncomingCalls(false)));
     backend.send(Command::SetLocalSetting(LocalSetting::AlwaysRelayCalls(true)));
+    backend.send(Command::SetLocalSetting(LocalSetting::ImageOptimization(langis_core::media::Optimization::Fast)));
+    backend.send(Command::SetLocalSetting(LocalSetting::GiphyKey("  abc123 ".into())));
     // Commands run in order: once the devices come back, the settings are in.
     backend.send(Command::LoadCallDevices);
     next_devices(&mut events);
@@ -83,5 +85,7 @@ fn local_settings_are_saved() {
     assert_eq!(Theme::from_setting(read(langis_core::SETTING_THEME).as_deref()), Theme::Dark);
     assert_eq!(read(langis_core::SETTING_INCOMING_CALLS).as_deref(), Some("false"));
     assert_eq!(read(langis_core::SETTING_ALWAYS_RELAY_CALLS).as_deref(), Some("true"));
+    assert_eq!(read(langis_core::SETTING_IMAGE_OPTIMIZATION).as_deref(), Some("fast"));
+    assert_eq!(read(langis_core::SETTING_GIPHY_API_KEY).as_deref(), Some("abc123"));
     backend.stop(std::time::Duration::from_secs(5));
 }

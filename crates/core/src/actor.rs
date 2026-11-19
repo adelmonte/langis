@@ -1155,7 +1155,7 @@ impl Actor {
                 Command::SetAutoDownload(choices) => self.set_auto_download(choices).await,
                 Command::SetLocalSetting(setting) => {
                     let (key, value) = setting.key_value();
-                    if let Err(error) = self.db.set_setting(key, value).await {
+                    if let Err(error) = self.db.set_setting(key, &value).await {
                         self.error("failed to save the setting", error);
                     }
                 }

@@ -114,7 +114,7 @@ pub const SETTING_CONTACT_AVATARS: &str = "contact_avatars";
 pub const SETTING_THEME: &str = "theme";
 
 /// This device's own settings, saved with `Command::SetLocalSetting`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalSetting {
     /// `SETTING_THEME`.
     Theme(Theme),
@@ -122,16 +122,24 @@ pub enum LocalSetting {
     IncomingCalls(bool),
     /// `SETTING_ALWAYS_RELAY_CALLS`.
     AlwaysRelayCalls(bool),
+    /// `SETTING_IMAGE_OPTIMIZATION`: how hard images are shrunk before
+    /// sending (Desktop's "Sent media quality" is the nearest setting).
+    ImageOptimization(media::Optimization),
+    /// `SETTING_GIPHY_API_KEY`: empty clears it, falling back to the
+    /// `GIPHY_API_KEY` environment variable.
+    GiphyKey(String),
 }
 
 impl LocalSetting {
     /// Its settings key and the value saved.
-    pub fn key_value(self) -> (&'static str, &'static str) {
-        let on = |on: bool| if on { "true" } else { "false" };
+    pub fn key_value(&self) -> (&'static str, String) {
+        let on = |on: bool| if on { "true" } else { "false" }.to_owned();
         match self {
-            Self::Theme(theme) => (SETTING_THEME, theme.as_str()),
-            Self::IncomingCalls(value) => (SETTING_INCOMING_CALLS, on(value)),
-            Self::AlwaysRelayCalls(value) => (SETTING_ALWAYS_RELAY_CALLS, on(value)),
+            Self::Theme(theme) => (SETTING_THEME, theme.as_str().to_owned()),
+            Self::IncomingCalls(value) => (SETTING_INCOMING_CALLS, on(*value)),
+            Self::AlwaysRelayCalls(value) => (SETTING_ALWAYS_RELAY_CALLS, on(*value)),
+            Self::ImageOptimization(level) => (SETTING_IMAGE_OPTIMIZATION, level.as_setting().to_owned()),
+            Self::GiphyKey(key) => (SETTING_GIPHY_API_KEY, key.trim().to_owned()),
         }
     }
 }
@@ -666,8 +674,9 @@ pub enum Command {
     /// Desktop's media auto-download choices (Data usage), kept on this
     /// device.
     SetAutoDownload(auto_download::AutoDownload),
-    /// Saves one of this device's own settings (not synced), the theme
-    /// or a call setting. The core reads them as it needs them; no event.
+    /// Saves one of this device's own settings (not synced): the theme, a
+    /// call setting, image optimization or the Giphy key. The core reads
+    /// them as it needs them; no event.
     SetLocalSetting(LocalSetting),
     /// Adds groups' stories to the list we post to (`Always`, Desktop's
     /// "New group story") or removes them (`Never`, "Remove group story"),

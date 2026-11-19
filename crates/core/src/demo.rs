@@ -2269,7 +2269,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             }
             Command::SetLocalSetting(setting) => {
                 let (key, value) = setting.key_value();
-                let _ = db.set_setting(key, value).await;
+                let _ = db.set_setting(key, &value).await;
             }
             Command::SetAutoDownload(choices) => {
                 let _ = db.set_setting(crate::auto_download::SETTING_AUTO_DOWNLOAD, &serde_json::to_string(&choices).unwrap_or_default()).await;
