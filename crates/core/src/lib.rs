@@ -522,8 +522,10 @@ pub enum Command {
     /// Sends a failed message again, with its original timestamp.
     RetrySend { message_id: i64 },
     /// Sends copies of messages (text, photos, GIFs, link previews) to
-    /// other chats, as Desktop's "Forward".
-    Forward { message_ids: Vec<i64>, conversations: Vec<ConversationId> },
+    /// other chats, as Desktop's "Forward". `body`, for a single message,
+    /// is its text as edited before sending (Desktop's
+    /// `ForwardMessageEditor`); `None` sends it as it was.
+    Forward { message_ids: Vec<i64>, conversations: Vec<ConversationId>, body: Option<String> },
     /// Deletes a whole chat on this device and your other devices.
     DeleteConversation { conversation: ConversationId },
     /// Answers a message request as Desktop's message request bar does:

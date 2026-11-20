@@ -1600,7 +1600,8 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                     emit(Event::MessageChanged { conversation: m.conversation_id, message_id });
                 }
             }
-            Command::Forward { message_ids, conversations } => {
+            Command::Forward { message_ids, conversations, body } => {
+                let body = body.filter(|_| message_ids.len() == 1);
                 for conversation in conversations {
                     for message_id in &message_ids {
                         let Ok(Some(original)) = db.message(*message_id).await else { continue };
@@ -1612,7 +1613,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                             direction: Direction::Outgoing,
                             author: None,
                             author_name: None,
-                            body: original.body.clone(),
+                            body: body.clone().unwrap_or_else(|| original.body.clone()),
                             status: DeliveryStatus::Sent,
                             quote: None,
                             attachments: original.attachments.clone(),

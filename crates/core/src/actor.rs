@@ -1066,7 +1066,7 @@ impl Actor {
                 }
                 Command::PinMessage { message_id, duration } => self.set_pin(message_id, true, duration).await,
                 Command::UnpinMessage { message_id } => self.set_pin(message_id, false, None).await,
-                Command::Forward { message_ids, conversations } => self.forward(message_ids, conversations).await,
+                Command::Forward { message_ids, conversations, body } => self.forward(message_ids, conversations, body).await,
                 Command::DeleteConversation { conversation } => self.delete_conversation(conversation).await,
                 Command::AnswerMessageRequest { conversation, answer } => {
                     self.answer_message_request(conversation, answer).await
@@ -4101,7 +4101,9 @@ impl Actor {
 
     /// Desktop's "Forward": a new message per chat with the same text and
     /// media. Attachments we haven't downloaded can't go along.
-    async fn forward(self: Rc<Self>, message_ids: Vec<i64>, conversations: Vec<ConversationId>) {
+    async fn forward(self: Rc<Self>, message_ids: Vec<i64>, conversations: Vec<ConversationId>, body: Option<String>) {
+        // An edited text only stands in for a single message's.
+        let body = body.filter(|_| message_ids.len() == 1);
         // Desktop's `maybeForwardMessages` refuses ended groups.
         for conversation in &conversations {
             if self.is_ended(conversation).await {
@@ -4127,18 +4129,21 @@ impl Actor {
                     || message.poll.is_some()
                     || message.view_once.is_some()
                     || attachments.len() < message.attachments.len()
-                    || (message.body.is_empty() && attachments.is_empty())
+                    || (body.as_deref().unwrap_or(&message.body).trim().is_empty() && attachments.is_empty())
                 {
                     skipped += 1;
                     continue;
                 }
+                let text = body.clone().unwrap_or_else(|| message.body.clone());
+                // A preview goes only while its link is still in the text.
+                let preview = message.link_preview.clone().filter(|p| text.contains(&p.url));
                 let Some((id, data, timestamp)) = self
-                    .store_outgoing(conversation, message.body.clone(), None, attachments.clone(), message.link_preview.clone())
+                    .store_outgoing(conversation, text, None, attachments.clone(), preview.clone())
                     .await
                 else {
                     continue;
                 };
-                self.enqueue_with_media(conversation.clone(), id, data, timestamp, &attachments, message.link_preview.as_ref());
+                self.enqueue_with_media(conversation.clone(), id, data, timestamp, &attachments, preview.as_ref());
             }
         }
         if skipped > 0 {
