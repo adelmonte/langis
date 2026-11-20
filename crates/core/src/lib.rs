@@ -1210,6 +1210,10 @@ pub enum Event {
     NeedsLinking,
     /// Provisioning URL to render as a QR code.
     LinkUrl(Url),
+    /// The phone scanned the code and linked this device; the first sync
+    /// (contacts, groups) runs until `Ready` (Desktop's "Syncing contacts
+    /// and groups" step).
+    Linked,
     LinkFailed(String),
     /// Account is ready. Emitted at startup when already linked, and after linking.
     Ready { phone: Option<String>, aci: String },

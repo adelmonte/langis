@@ -74,6 +74,7 @@ linking:
 |---|---|
 | `Event::NeedsLinking` | Show a link screen, and send `Command::Link`. |
 | `Event::LinkUrl(url)` | Draw `url` as a QR code. The user scans it in Signal on their phone (Settings, Linked devices). |
+| `Event::Linked` | The phone scanned the code. Show a "Syncing contacts and groups" step until `Ready`. |
 | `Event::LinkFailed(why)` | Show `why`; send `Command::Link` again to retry. |
 | `Event::Ready { aci, phone }` | Linked. Show the chat list. |
 

@@ -1274,6 +1274,7 @@ impl Actor {
         match result {
             Ok(manager) => {
                 info!("linked as secondary device");
+                self.emit(Event::Linked);
                 // A fresh link may be a different account: start from a clean slate.
                 self.identities_seen.borrow_mut().clear();
         if let Err(error) = self.db.clear().await {
