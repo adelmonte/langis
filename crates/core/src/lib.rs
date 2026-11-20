@@ -721,6 +721,10 @@ pub enum Command {
     /// For a call link's call (`ConversationId::call_link`) too, which
     /// also refreshes the link's name and settings.
     PeekGroupCall { conversation: ConversationId },
+    /// Whether a group call we start rings the group (Desktop's lobby Ring
+    /// toggle) or only notifies it. On until changed; groups over 16 are
+    /// never rung.
+    SetOutgoingRing(bool),
     /// Makes a call link (Desktop's "Create a call link"): answered with
     /// `Event::CallLinkCreated`, once the calling server has it.
     CreateCallLink,
@@ -846,6 +850,9 @@ pub enum ChatChange {
     Blocked(bool),
     /// Their stories hidden (Desktop's Hide story).
     HideStory(bool),
+    /// A group's mentions while it's muted: `true` is Desktop's "Don't
+    /// notify" (`dontNotifyForMentionsIfMuted`).
+    DontNotifyMentions(bool),
 }
 
 /// A story list (Desktop's distribution list), from Storage Service.
@@ -1251,8 +1258,10 @@ pub enum Event {
     ConversationCleared(ConversationId),
     /// A chat's pinned messages changed.
     PinsChanged(ConversationId),
-    /// Who's in a group's call (their ACIs, one per device; empty: no call).
-    GroupPeek { conversation: ConversationId, users: Vec<String> },
+    /// Who's in a group's call (their ACIs, one per device; empty: no call),
+    /// and the most devices it takes, when the calling server says: with
+    /// `users` at that many, the call is full (Desktop's "Call full").
+    GroupPeek { conversation: ConversationId, users: Vec<String>, max_devices: Option<u32> },
     /// Screens and windows to present, or why there are none.
     ShareSources(Result<Vec<langis_calls::ShareSource>, String>),
     /// The devices calls can use, and which are chosen.

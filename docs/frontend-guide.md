@@ -174,6 +174,13 @@ and formatting as `SendFile`'s). `Forward { message_ids, conversations, body }` 
 messages to other chats; `body` is a single message's text as edited
 before sending (Desktop's forward editor), `None` to send it unchanged.
 
+Chat state changes go through `Command::SetChat { conversation, change }`
+(archive, mute, mark unread, block, hide stories, and a group's
+`DontNotifyMentions`, Desktop's "Mentions: Don't notify" while muted),
+here at once and on other devices through Storage Service. A
+`Conversation` carries them back, with `blocked_at` (when it was blocked)
+and a person's profile `about`.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified
@@ -223,6 +230,8 @@ meanwhile. Without ffmpeg the original goes.
 | `Command::AcceptCall { video }` / `DeclineCall` / `HangUp` | `Event::Call(None)` when it's over |
 | `Command::SetCallAudio(on)`, `SetCallVideo(on)` | Updated `Event::Call` |
 | `Command::LoadCallDevices`, `SetCallDevice`, `SetShareQuality` | `Event::CallDevices` |
+| `Command::PeekGroupCall { conversation }` (the lobby) | `Event::GroupPeek { users, max_devices }`: who's in it; with `users.len()` at `max_devices` the call is full |
+| `Command::SetOutgoingRing(on)` (the lobby's Ring toggle) | A group call we start then rings the group (16 or fewer) or only notifies it |
 
 An incoming call arrives as `Event::Call(Some(update))` with
 `update.incoming` set: ring.

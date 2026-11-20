@@ -512,6 +512,8 @@ struct Actor {
     group_call: RefCell<Option<group_calls::GroupCall>>,
     /// Lobby peeks awaiting their answer, by request id.
     peeks: RefCell<HashMap<u32, ConversationId>>,
+    /// Ring the group when we start its call (`Command::SetOutgoingRing`).
+    outgoing_ring: std::cell::Cell<bool>,
     /// Today's call link credential (`call_links.rs`).
     link_auth: RefCell<Option<crate::call_links::AuthCredential>>,
     /// The calling server's call link API.
@@ -673,6 +675,7 @@ pub(crate) async fn run(
         call: RefCell::new(None),
         group_call: RefCell::new(None),
         peeks: RefCell::default(),
+        outgoing_ring: std::cell::Cell::new(true),
         link_auth: RefCell::new(None),
         link_client: std::cell::OnceCell::new(),
         link_refresh_queue: RefCell::default(),
@@ -1200,6 +1203,7 @@ impl Actor {
                     self.peek_call_link(conversation).await
                 }
                 Command::PeekGroupCall { conversation } => self.peek_group_call(conversation).await,
+                Command::SetOutgoingRing(ring) => self.outgoing_ring.set(ring),
                 Command::MarkCallsRead { conversation } => self.mark_calls_read(conversation).await,
                 Command::CallReact { emoji } => self.call_react(emoji),
                 Command::RaiseHand(raise) => self.raise_hand(raise),
@@ -2770,6 +2774,7 @@ impl Actor {
             ChatChange::MarkedUnread(on) => self.db.set_marked_unread(&conversation, on).await,
             ChatChange::Blocked(on) => self.db.set_blocked(&conversation, on).await,
             ChatChange::HideStory(on) => self.set_story_hidden(&conversation, on).await,
+            ChatChange::DontNotifyMentions(on) => self.db.set_dont_notify_mentions(&conversation, on).await,
         };
         if let Err(error) = local {
             return self.error("failed to update chat", error);
@@ -2781,6 +2786,7 @@ impl Actor {
             ChatChange::MarkedUnread(on) => storage::ChatEdit::MarkedUnread(on),
             ChatChange::Blocked(on) => storage::ChatEdit::Blocked(on),
             ChatChange::HideStory(on) => storage::ChatEdit::HideStory(on),
+            ChatChange::DontNotifyMentions(on) => storage::ChatEdit::DontNotifyMentions(on),
         };
         match storage::write_chat(&manager, &conversation, edit).await {
             Ok(()) => self.storage_written(),

@@ -1128,9 +1128,10 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 }
             }
             // Maya's in the hiking group's call; no one's in the others'.
+            Command::SetOutgoingRing(_) => {}
             Command::PeekGroupCall { conversation } => {
                 let users = if conversation.0 == GROUP { vec![aci(MAYA).to_owned()] } else { Vec::new() };
-                emit(Event::GroupPeek { conversation, users });
+                emit(Event::GroupPeek { conversation, users, max_devices: Some(75) });
             }
             Command::CreateCallLink => {
                 let key = new_demo_link_key();
@@ -1756,6 +1757,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                     crate::ChatChange::MutedUntil(until) => db.set_muted_until(&conversation, until).await,
                     crate::ChatChange::MarkedUnread(on) => db.set_marked_unread(&conversation, on).await,
                     crate::ChatChange::Blocked(on) => db.set_blocked(&conversation, on).await,
+                    crate::ChatChange::DontNotifyMentions(on) => db.set_dont_notify_mentions(&conversation, on).await,
                     crate::ChatChange::HideStory(on) => {
                         let done = db.set_story_hidden(&conversation, on).await;
                         let _ = events.unbounded_send(Event::StorySettingsChanged);

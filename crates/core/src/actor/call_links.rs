@@ -324,18 +324,18 @@ impl Actor {
         let client = self.link_client();
         let key = link.root_key.clone();
         let peek = answer(move |done| client.peek(&key, &auth, done)).await;
-        let users = match &peek {
+        let (users, max_devices) = match &peek {
             Ok(peek) => {
                 self.on_link_call_peek(&room_id, peek).await;
-                peek.users.iter().filter_map(|u| aci_of_bytes(u)).collect()
+                (peek.users.iter().filter_map(|u| aci_of_bytes(u)).collect(), peek.max_devices)
             }
             // No call yet is no one in it.
             Err(code) => {
                 debug!(code, "call link peek");
-                Vec::new()
+                (Vec::new(), None)
             }
         };
-        self.emit(Event::GroupPeek { conversation, users });
+        self.emit(Event::GroupPeek { conversation, users, max_devices });
     }
 
     /// What a peek says about a link's call: the link's state, and a call

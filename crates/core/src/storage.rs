@@ -488,6 +488,8 @@ pub(crate) enum ChatEdit {
     /// A group's story send mode (`storySendMode`); contact records have
     /// none.
     StorySendMode(langis_store::StorySendMode),
+    /// A group's `dontNotifyForMentionsIfMuted`; contact records have none.
+    DontNotifyMentions(bool),
 }
 
 impl ChatEdit {
@@ -502,6 +504,7 @@ impl ChatEdit {
             ChatEdit::HideStory(on) => (Some(14), 8, u64::from(on)),
             ChatEdit::ProfileSharing(on) => (Some(10), 3, u64::from(on)),
             ChatEdit::StorySendMode(mode) => (None, 10, mode.to_wire() as u64),
+            ChatEdit::DontNotifyMentions(on) => (None, 7, u64::from(on)),
         };
         Some((if group { group_field } else { contact? }, value))
     }
@@ -1665,6 +1668,7 @@ fn contact_chat(record: &ContactRecord) -> Option<ChatState> {
         muted_until: clamp_millis(record.muted_until_timestamp),
         marked_unread: record.marked_unread,
         blocked: record.blocked,
+        dont_notify_mentions: false,
     })
 }
 
@@ -1675,6 +1679,7 @@ fn group_chat(record: &GroupV2Record) -> Option<ChatState> {
         muted_until: clamp_millis(record.muted_until_timestamp),
         marked_unread: record.marked_unread,
         blocked: record.blocked,
+        dont_notify_mentions: record.dont_notify_for_mentions_if_muted,
     })
 }
 
@@ -2520,10 +2525,11 @@ mod tests {
                 archived: true,
                 muted_until: i64::MAX,
                 marked_unread: false,
-                blocked: false
+                blocked: false,
+                dont_notify_mentions: false
             })
         );
-        let group = GroupV2Record { master_key: vec![1; 32], muted_until_timestamp: 5, ..Default::default() };
+        let group = GroupV2Record { master_key: vec![1; 32], muted_until_timestamp: 5, dont_notify_for_mentions_if_muted: true, ..Default::default() };
         assert_eq!(
             group_chat(&group),
             Some(ChatState {
@@ -2531,7 +2537,8 @@ mod tests {
                 archived: false,
                 muted_until: 5,
                 marked_unread: false,
-                blocked: false
+                blocked: false,
+                dont_notify_mentions: true
             })
         );
         assert_eq!(group_chat(&GroupV2Record { master_key: vec![1; 16], ..Default::default() }), None);

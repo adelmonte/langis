@@ -765,6 +765,7 @@ async fn chat_states_apply_to_existing_conversations_only() {
         muted_until,
         marked_unread: false,
         blocked: false,
+        dont_notify_mentions: false,
     };
 
     let past = 1_000;
@@ -929,16 +930,21 @@ async fn clearing_forgets_the_whole_account() {
 async fn marked_unread_and_blocked_flags() {
     let db = test_db().await;
     db.insert_message(&incoming("d:a", "a", 1, "hi")).await.unwrap();
-    let state = ChatState { id: conv("d:a"), archived: false, muted_until: 0, marked_unread: true, blocked: true };
+    let state = ChatState { id: conv("d:a"), archived: false, muted_until: 0, marked_unread: true, blocked: true, dont_notify_mentions: true };
     assert!(db.apply_chat_states(std::slice::from_ref(&state)).await.unwrap());
     assert!(!db.apply_chat_states(&[state]).await.unwrap());
     let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
-    assert!(c.marked_unread && c.blocked);
+    assert!(c.marked_unread && c.blocked && c.dont_notify_mentions);
+    // When it was blocked is kept, and goes with an unblock.
+    assert!(c.blocked_at.is_some());
     // Opening the chat clears "Mark as unread".
     db.mark_read(&conv("d:a")).await.unwrap();
     assert!(!db.conversation(&conv("d:a")).await.unwrap().unwrap().marked_unread);
     db.set_blocked(&conv("d:a"), false).await.unwrap();
-    assert!(!db.conversation(&conv("d:a")).await.unwrap().unwrap().blocked);
+    let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
+    assert!(!c.blocked && c.blocked_at.is_none());
+    db.set_dont_notify_mentions(&conv("d:a"), false).await.unwrap();
+    assert!(!db.conversation(&conv("d:a")).await.unwrap().unwrap().dont_notify_mentions);
 }
 
 #[tokio::test]
@@ -1177,6 +1183,9 @@ async fn drop_later_migrations(db: &AppDb) {
     sqlx::query("ALTER TABLE messages DROP COLUMN content").execute(&db.writer).await.unwrap();
     sqlx::query("DROP TABLE sticker_packs").execute(&db.writer).await.unwrap();
     sqlx::query("ALTER TABLE messages DROP COLUMN edit_history").execute(&db.writer).await.unwrap();
+    for column in ["dont_notify_mentions", "blocked_at"] {
+        sqlx::query(AssertSqlSafe(format!("ALTER TABLE conversations DROP COLUMN {column}"))).execute(&db.writer).await.unwrap();
+    }
 }
 
 /// Rewrites the migration history to look like a pre-squash database that

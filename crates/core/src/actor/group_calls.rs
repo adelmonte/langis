@@ -405,6 +405,8 @@ impl Actor {
                     }
                     call.joined && call.starter && !call.rang && call.participants.is_empty()
                 };
+                // The lobby's Ring off: the group is only notified.
+                let ring = ring && self.outgoing_ring.get();
                 // Desktop rings a group it starts a call in (if it isn't big).
                 if ring && let Some(key) = self.group_key(client_id) {
                     if self.group_members(key).await.len() <= MAX_RING_SIZE {
@@ -478,8 +480,9 @@ impl Actor {
             }
             GroupEvent::PeekResult { request_id, peek } => {
                 let Some(conversation) = self.peeks.borrow_mut().remove(&request_id) else { return };
-                let users = peek.map(|p| p.users.iter().filter_map(|u| aci_of(u)).collect()).unwrap_or_default();
-                self.emit(Event::GroupPeek { conversation, users });
+                let users = peek.as_ref().map(|p| p.users.iter().filter_map(|u| aci_of(u)).collect()).unwrap_or_default();
+                let max_devices = peek.as_ref().and_then(|p| p.max_devices);
+                self.emit(Event::GroupPeek { conversation, users, max_devices });
             }
             GroupEvent::Ended { client_id, reason } => {
                 let ended = {

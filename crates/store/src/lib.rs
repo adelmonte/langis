@@ -154,6 +154,14 @@ pub struct Conversation {
     pub added_by: Option<String>,
     /// A person in our address book (Desktop's `isInSystemContacts`).
     pub system_contact: bool,
+    /// While muted, mentions don't notify either (Desktop's
+    /// `dontNotifyForMentionsIfMuted`, a group's "Mentions: Don't notify").
+    pub dont_notify_mentions: bool,
+    /// Unix millis it was blocked, when that happened here or was synced.
+    pub blocked_at: Option<i64>,
+    /// A person's profile About, its emoji first (Desktop's `about` and
+    /// `aboutEmoji`), when their profile has one.
+    pub about: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -922,6 +930,8 @@ pub struct ChatState {
     /// "Mark as unread": shows as unread until opened.
     pub marked_unread: bool,
     pub blocked: bool,
+    /// A group's `dontNotifyForMentionsIfMuted` (contacts have none).
+    pub dont_notify_mentions: bool,
 }
 
 /// Input for [`AppDb::insert_message`].
@@ -1175,6 +1185,9 @@ const CONVERSATION_COLUMNS: &str = "id, kind, title, phone, color, members, last
       WHERE m.conversation_id = conversations.id AND m.unread_poll_votes = 1) AS unread_poll_votes, \
      message_request, reported, added_by, \
      EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = substr(conversations.id, 3)) AS system_contact, \
+     dont_notify_mentions, blocked_at, \
+     (SELECT TRIM(p.about_emoji || ' ' || p.about) FROM profiles p \
+      WHERE p.service_id = substr(conversations.id, 3) AND conversations.kind = 'direct') AS about, \
      (kind = 'note_to_self' OR id = 'd:11111111-1111-4111-8111-111111111111' OR message_request = 1 \
       OR EXISTS (SELECT 1 FROM profile_sharing p WHERE p.id = conversations.id) \
       OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.author_key = '' AND m.notice IS NULL) \
@@ -1401,6 +1414,9 @@ fn conversation_from_row(row: &SqliteRow) -> Result<Conversation> {
         reported: row.try_get("reported")?,
         added_by: row.try_get("added_by")?,
         system_contact: row.try_get("system_contact")?,
+        dont_notify_mentions: row.try_get("dont_notify_mentions")?,
+        blocked_at: row.try_get("blocked_at")?,
+        about: row.try_get::<Option<String>, _>("about")?.filter(|a| !a.is_empty()),
     })
 }
 
@@ -1950,15 +1966,18 @@ impl AppDb {
         let mut changed = 0;
         for state in states {
             changed += sqlx::query(
-                "UPDATE conversations SET archived = ?1, muted_until = ?2, marked_unread = ?3, blocked = ?4 \
+                "UPDATE conversations SET archived = ?1, muted_until = ?2, marked_unread = ?3, blocked = ?4, dont_notify_mentions = ?6, \
+                   blocked_at = CASE WHEN ?4 THEN COALESCE(blocked_at, ?7) END \
                  WHERE id = ?5 AND (archived IS NOT ?1 OR muted_until IS NOT ?2 \
-                   OR marked_unread IS NOT ?3 OR blocked IS NOT ?4)",
+                   OR marked_unread IS NOT ?3 OR blocked IS NOT ?4 OR dont_notify_mentions IS NOT ?6)",
             )
             .bind(state.archived)
             .bind(state.muted_until)
             .bind(state.marked_unread)
             .bind(state.blocked)
             .bind(&state.id.0)
+            .bind(state.dont_notify_mentions)
+            .bind(now_millis())
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -1975,8 +1994,20 @@ impl AppDb {
         self.set_flag(id, "marked_unread", marked).await
     }
 
+    /// Blocks or unblocks a chat, noting when it was blocked.
     pub async fn set_blocked(&self, id: &ConversationId, blocked: bool) -> Result<()> {
-        self.set_flag(id, "blocked", blocked).await
+        sqlx::query("UPDATE conversations SET blocked = ?1, blocked_at = CASE WHEN ?1 THEN COALESCE(blocked_at, ?2) END WHERE id = ?3")
+            .bind(blocked)
+            .bind(now_millis())
+            .bind(&id.0)
+            .execute(&self.writer)
+            .await?;
+        Ok(())
+    }
+
+    /// A chat's "Mentions" while muted: `true` is Don't notify.
+    pub async fn set_dont_notify_mentions(&self, id: &ConversationId, on: bool) -> Result<()> {
+        self.set_flag(id, "dont_notify_mentions", on).await
     }
 
     /// Sets (or with `None` clears) a conversation's draft, unformatted.
