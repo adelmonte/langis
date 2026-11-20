@@ -379,7 +379,7 @@ pub fn summarize_group_change(
     for change in &changes.changes {
         let notice = match change {
             GroupChange::Title(title) => GroupNotice::Title { title: title.clone() },
-            GroupChange::Description(_) => GroupNotice::Description,
+            GroupChange::Description(d) => GroupNotice::Description { description: Some(d.clone().unwrap_or_default()) },
             GroupChange::Avatar(_) => GroupNotice::Avatar,
             GroupChange::NewMember(member) => {
                 let sid = member.aci.service_id_string();

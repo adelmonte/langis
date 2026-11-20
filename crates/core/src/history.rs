@@ -461,7 +461,9 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
     match update.update.as_ref()? {
         U::GroupNameUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Title { title: u.newGroupName.clone().unwrap_or_default() }),
         U::GroupAvatarUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Avatar),
-        U::GroupDescriptionUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Description),
+        U::GroupDescriptionUpdate(u) => {
+            group(person(&u.updaterAci)?, GroupNotice::Description { description: Some(u.newDescription.clone().unwrap_or_default()) })
+        }
         U::GroupMembershipAccessLevelChangeUpdate(u) => group(
             person(&u.updaterAci)?,
             GroupNotice::MemberAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },

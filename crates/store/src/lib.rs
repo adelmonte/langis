@@ -836,7 +836,12 @@ pub enum Notice {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GroupNotice {
     Title { title: String },
-    Description,
+    /// The new description: empty when it was removed, `None` in notices
+    /// kept before it was.
+    Description {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
     Avatar,
     /// `member` joined or was added.
     Added { member: Option<String> },

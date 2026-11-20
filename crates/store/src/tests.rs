@@ -3159,3 +3159,11 @@ async fn edit_status_shows_failures_and_keeps_receipts() {
     assert!(db.set_edit_status(id, DeliveryStatus::Sent).await.unwrap(), "a retry that works clears it");
     assert_eq!(db.message(id).await.unwrap().unwrap().status, DeliveryStatus::Sent);
 }
+
+#[test]
+fn description_notices_kept_before_their_text_still_read() {
+    let old: GroupNotice = serde_json::from_str(r#"{"kind":"description"}"#).unwrap();
+    assert_eq!(old, GroupNotice::Description { description: None });
+    let new = GroupNotice::Description { description: Some("Hikes on Saturdays".into()) };
+    assert_eq!(serde_json::from_str::<GroupNotice>(&serde_json::to_string(&new).unwrap()).unwrap(), new);
+}
