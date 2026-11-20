@@ -77,9 +77,10 @@ pub async fn search(api_key: &str, query: &str, offset: u32) -> anyhow::Result<G
         ("offset", offset.to_string()),
     ]);
     let url = url::Url::parse_with_params(&format!("{API}/{path}"), &params)?;
-    let response = client()?.get(url).send().await.context("reaching Giphy")?;
+    // reqwest's errors name the URL, which holds the API key: drop it.
+    let response = client()?.get(url).send().await.map_err(|e| e.without_url()).context("reaching Giphy")?;
     let status = response.status();
-    let body: Value = response.json().await.context("reading Giphy's answer")?;
+    let body: Value = response.json().await.map_err(|e| e.without_url()).context("reading Giphy's answer")?;
     if status.as_u16() == 401 || status.as_u16() == 403 {
         bail!("Giphy rejected the API key");
     }
