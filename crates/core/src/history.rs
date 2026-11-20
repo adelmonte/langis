@@ -1301,7 +1301,7 @@ fn attachment(pointer: &proto::FilePointer) -> AttachmentMeta {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
-        blurhash: pointer.blurHash.clone().filter(|b| !b.is_empty()),
+        blurhash: pointer.blurHash.clone().filter(|b| crate::mapping::valid_blurhash(b)),
     }
 }
 

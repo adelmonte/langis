@@ -999,8 +999,15 @@ pub fn attachment_meta(p: &AttachmentPointer) -> AttachmentMeta {
         thumbnail_path: None,
         sticker_pack: None,
         transcode: false,
-        blurhash: p.blur_hash.clone().filter(|b| !b.is_empty()),
+        blurhash: p.blur_hash.clone().filter(|b| valid_blurhash(b)),
     }
+}
+
+/// Whether a sender's blurhash looks like one: base83, at most 9x9
+/// components (90 characters). Anything else isn't kept.
+pub(crate) fn valid_blurhash(hash: &str) -> bool {
+    const BASE83: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~";
+    (6..=90).contains(&hash.len()) && hash.chars().all(|c| BASE83.contains(c))
 }
 
 /// What a message's whole text is sent as when it's too long for the body
