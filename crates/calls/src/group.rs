@@ -191,12 +191,12 @@ pub struct AudioLevels(Arc<Mutex<(u16, HashMap<DemuxId, u16>)>>);
 impl AudioLevels {
     /// A participant's level from 0 to 1 (0 when unknown).
     pub fn level(&self, demux_id: DemuxId) -> f32 {
-        self.0.lock().ok().and_then(|l| l.1.get(&demux_id).copied()).map_or(0., |v| f32::from(v) / 32767.)
+        self.0.lock().ok().and_then(|l| l.1.get(&demux_id).copied()).map_or(0., |v| (f32::from(v) / 32767.).min(1.))
     }
 
     /// Our microphone's level from 0 to 1.
     pub fn local(&self) -> f32 {
-        self.0.lock().map_or(0., |l| f32::from(l.0) / 32767.)
+        self.0.lock().map_or(0., |l| (f32::from(l.0) / 32767.).min(1.))
     }
 
     pub(crate) fn set(&self, captured: u16, received: impl IntoIterator<Item = (DemuxId, u16)>) {

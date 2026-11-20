@@ -426,6 +426,8 @@ pub struct Calls {
     /// Which share `share` is, for its events.
     share_id: u64,
     share_quality: ShareQuality,
+    /// Group calls' audio levels, cleared when a call ends.
+    levels: AudioLevels,
     group_frames: GroupFrames,
     /// RingRTC's events' way out, for ours too.
     emit: Emit,
@@ -444,7 +446,7 @@ impl Calls {
         levels: AudioLevels,
     ) -> anyhow::Result<Self> {
         let emit: Emit = Arc::new(emit);
-        let handler = Handler { emit: emit.clone(), levels };
+        let handler = Handler { emit: emit.clone(), levels: levels.clone() };
         let mut factory = PeerConnectionFactory::new(&pcf::AudioConfig::default(), false, "", None)
             .map_err(|e| anyhow!("{e}"))
             .context("starting WebRTC")?;
@@ -485,6 +487,7 @@ impl Calls {
             source,
             remote,
             local,
+            levels,
             group_frames,
             emit,
             audio_on: true,
@@ -710,6 +713,7 @@ impl Calls {
         self.manager.disconnect(client_id);
         self.manager.delete_group_call_client(client_id);
         self.group_frames.clear();
+        self.levels.clear();
     }
 
     /// Rings everyone in the group (Desktop rings groups of up to 16).
