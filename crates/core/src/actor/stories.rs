@@ -148,7 +148,10 @@ impl Actor {
         match saved.await {
             Ok(true) => self.emit(Event::StoriesChanged),
             Ok(false) => {}
-            Err(error) => warn!(error = %format!("{error:#}"), "couldn't download a story"),
+            Err(error) => {
+                warn!(error = %format!("{error:#}"), "couldn't download a story");
+                self.emit(Event::StoryDownloadFailed { id });
+            }
         }
     }
 
@@ -159,7 +162,10 @@ impl Actor {
             Ok(Some(bytes)) => AttachmentPointer::decode(bytes.as_slice()).ok(),
             _ => None,
         };
-        let Some(pointer) = pointer else { return };
+        let Some(pointer) = pointer else {
+            self.emit(Event::StoryDownloadFailed { id });
+            return;
+        };
         let sent_at = self.db.story(id).await.ok().flatten().map(|s| s.sent_at);
         self.download_story(&manager, id, sent_at, &pointer).await;
     }

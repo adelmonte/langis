@@ -217,6 +217,9 @@ A link preview's image downloads as photos do; when that setting leaves it,
 `Command::FetchPreviewImage` gets it. While one downloads, `Event::DownloadProgress` reports the bytes received a
 few times a second, and `Command::CancelDownload` stops it (it ends with
 `received` 0). Files from transferred history download without progress.
+A story's photo or video comes with `Command::FetchStory { id }` (then
+`StoriesChanged`); `Event::StoryDownloadFailed { id }` means it couldn't, and
+another `FetchStory` tries again.
 
 Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
 upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending

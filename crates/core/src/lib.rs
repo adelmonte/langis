@@ -1242,6 +1242,9 @@ pub enum Event {
     Megaphones(Vec<megaphones::MegaphoneView>),
     /// Stories came, went, were viewed or replied to.
     StoriesChanged,
+    /// A story's photo or video couldn't be downloaded (Desktop's "Can't
+    /// download story"); a later `FetchStory` tries again.
+    StoryDownloadFailed { id: i64 },
     /// Stories' settings changed (hidden stories, stories off, view
     /// receipts, story lists), here or from Storage Service.
     StorySettingsChanged,
