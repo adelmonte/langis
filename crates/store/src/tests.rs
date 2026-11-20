@@ -1856,6 +1856,14 @@ async fn stories_last_a_day_and_keep_views_and_replies() {
     assert!(!db.set_story_file(ours, Some(now - 499), "/tmp/w.jpg").await.unwrap(), "another story's time");
     assert!(db.set_story_file(ours, Some(now - 500), "/tmp/x.jpg").await.unwrap());
     assert!(!db.set_story_file(ours + 1_000, None, "/tmp/y.jpg").await.unwrap(), "no such story");
+    // A send that missed some: who, and the message to retry them with.
+    assert_eq!(db.set_story_failed(now - 500, &["b".into()]).await.unwrap(), Some(ours));
+    assert_eq!(db.set_story_failed(now - 1_000, &["b".into()]).await.unwrap(), None, "only ours");
+    db.set_story_wire(now - 500, b"wire").await.unwrap();
+    assert_eq!(db.story(ours).await.unwrap().unwrap().failed, vec!["b".to_owned()]);
+    assert_eq!(db.story_wire(ours).await.unwrap().as_deref(), Some(&b"wire"[..]));
+    db.set_story_failed(now - 500, &[]).await.unwrap();
+    assert!(db.story(ours).await.unwrap().unwrap().failed.is_empty(), "reached everyone on retry");
     assert!(!db.set_story_file(theirs, None, "/tmp/z.jpg").await.unwrap(), "a text story has no file");
 
     let stories = db.stories(now).await.unwrap();

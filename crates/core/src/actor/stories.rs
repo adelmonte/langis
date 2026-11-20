@@ -155,6 +155,29 @@ impl Actor {
         }
     }
 
+    /// Desktop's retry of a story send: the same message, one by one, to
+    /// those it didn't reach (each list's reply setting as before).
+    pub(super) async fn retry_story(&self, id: i64) {
+        let Ok(Some(story)) = self.db.story(id).await else { return };
+        if story.author.is_some() || story.failed.is_empty() {
+            return;
+        }
+        let Some(message) = self.db.story_wire(id).await.ok().flatten().and_then(|b| presage::proto::StoryMessage::decode(b.as_slice()).ok()) else {
+            return self.error("couldn't send the story again", "it was sent before langis kept stories to retry");
+        };
+        info!(recipients = story.failed.len(), "retrying a story");
+        let parts = story
+            .failed
+            .iter()
+            .map(|r| {
+                let allows = story.recipients.iter().find(|x| x.service_id == *r).map(|x| x.allows_replies).unwrap_or(story.allows_replies);
+                let body = if story.group.is_some() { message.clone() } else { presage::proto::StoryMessage { allows_replies: Some(allows), ..message.clone() } };
+                (r.clone(), ContentBody::StoryMessage(body))
+            })
+            .collect();
+        self.start_story_job(parts, story.sent_at as u64, StoryJobSync::Retry, "story");
+    }
+
     /// Downloads a story's photo or video (when it's opened).
     pub(super) async fn fetch_story(&self, id: i64) {
         let Some(manager) = self.manager() else { return };
@@ -661,6 +684,7 @@ impl Actor {
                 ..Default::default()
             };
             self.keep_our_story(base, None, content.clone(), allows_replies, recipients.clone()).await;
+            let _ = self.db.set_story_wire(base, &message.encode_to_vec()).await;
             info!(recipients = recipients.len(), lists = resolved.len(), "posting a story");
             // Desktop's `sendStory`: each list sends to its share at once,
             // with that list's sender key and whether it allows replies.
@@ -695,6 +719,7 @@ impl Actor {
                 .map(|service_id| langis_store::StoryRecipient { service_id, list_ids: Vec::new(), allows_replies: true })
                 .collect();
             self.keep_our_story(timestamp, Some(group.clone()), content.clone(), true, Vec::new()).await;
+            let _ = self.db.set_story_wire(timestamp, &message.encode_to_vec()).await;
             info!(recipients = recipients.len(), "posting a group story");
             // With the group's sender key, as its messages (Desktop's
             // `conversation.toSenderKeyTarget()`).
@@ -1024,7 +1049,7 @@ impl Actor {
             parts.into_iter().filter(|(r, _)| ServiceId::parse_from_service_id_string(r).is_some()).collect();
         self.story_jobs.borrow_mut().insert(
             job,
-            StoryJob { remaining: parts.len(), timestamp, sync, sent: Vec::new(), failures: HashMap::new(), what },
+            StoryJob { attempted: parts.iter().map(|(r, _)| r.clone()).collect(), remaining: parts.len(), timestamp, sync, sent: Vec::new(), failures: HashMap::new(), what },
         );
         if parts.is_empty() {
             // No one to send to: still tell our other devices.
@@ -1050,9 +1075,10 @@ impl Actor {
             .filter(|batch| !batch.recipients.is_empty())
             .collect();
         let remaining = batches.iter().map(|b| b.recipients.len()).sum();
+        let attempted = batches.iter().flat_map(|b| b.recipients.iter().cloned()).collect();
         self.story_jobs.borrow_mut().insert(
             job,
-            StoryJob { remaining, timestamp, sync, sent: Vec::new(), failures: HashMap::new(), what },
+            StoryJob { attempted, remaining, timestamp, sync, sent: Vec::new(), failures: HashMap::new(), what },
         );
         if remaining == 0 {
             self.finish_story_job(job);
@@ -1109,6 +1135,16 @@ impl Actor {
         } else {
             info!(sent = state.sent.len(), what = state.what, "story sent");
         }
+        // Our story's send state: who it didn't reach.
+        if matches!(state.sync, StoryJobSync::Story { .. } | StoryJobSync::Retry) {
+            let failed: Vec<String> = state.attempted.iter().filter(|r| !state.sent.contains(r)).cloned().collect();
+            let (db, events, sent_at) = (self.db.clone(), self.events.clone(), state.timestamp as i64);
+            tokio::task::spawn_local(async move {
+                if db.set_story_failed(sent_at, &failed).await.ok().flatten().is_some() {
+                    let _ = events.unbounded_send(Event::StoriesChanged);
+                }
+            });
+        }
         let config = crate::remote_config::current();
         let us = config.wire_service_id(&self.self_aci());
         let transcript = |r: &langis_store::StoryRecipient| {
@@ -1121,6 +1157,8 @@ impl Actor {
             }
         };
         let sent = match state.sync {
+            // A retry's recipients were in the first transcript.
+            StoryJobSync::Retry => return,
             StoryJobSync::Story { message, recipients } => sync_message::Sent {
                 timestamp: Some(state.timestamp),
                 story_message: Some(*message),
@@ -1157,6 +1195,8 @@ pub(super) enum StoryJobSync {
     Reply(Box<DataMessage>),
     /// A story deleted for some or all: who has which lists now.
     RecipientUpdate { sent_at: u64, recipients: Vec<langis_store::StoryRecipient> },
+    /// Our story again to those it didn't reach: no transcript.
+    Retry,
 }
 
 /// Desktop's `sendStoryMessage` for story lists: everyone on any of them,
@@ -1222,6 +1262,8 @@ struct StoryBatch {
 }
 
 pub(super) struct StoryJob {
+    /// Who it's going to (to note who it didn't reach).
+    attempted: Vec<String>,
     remaining: usize,
     timestamp: u64,
     sync: StoryJobSync,

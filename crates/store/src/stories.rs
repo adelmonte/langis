@@ -133,6 +133,9 @@ pub struct Story {
     pub views: Vec<StoryView>,
     /// Ours: who it went to.
     pub recipients: Vec<StoryRecipient>,
+    /// Ours: who the send didn't reach (Desktop's "Send failed" when it's
+    /// everyone, "Partially sent" otherwise).
+    pub failed: Vec<String>,
 }
 
 /// A story to keep.
@@ -153,7 +156,7 @@ pub struct NewStory {
 }
 
 const COLUMNS: &str = "id, author_key, author_name, sent_at, received_at, group_id, content, allows_replies, is_read, \
-                       expires_at, replies, views, recipients";
+                       expires_at, replies, views, recipients, failed";
 
 fn story_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Story> {
     let author: String = row.try_get("author_key")?;
@@ -172,6 +175,7 @@ fn story_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Story> {
         replies: json("replies")?.map(|r| serde_json::from_str(&r)).transpose()?.unwrap_or_default(),
         views: json("views")?.map(|v| serde_json::from_str(&v)).transpose()?.unwrap_or_default(),
         recipients: json("recipients")?.map(|r| serde_json::from_str(&r)).transpose()?.unwrap_or_default(),
+        failed: json("failed")?.map(|f| serde_json::from_str(&f)).transpose()?.unwrap_or_default(),
     })
 }
 
@@ -201,6 +205,27 @@ impl AppDb {
         .bind(if story.recipients.is_empty() { None } else { Some(serde_json::to_string(&story.recipients)?) })
         .fetch_optional(&self.writer)
         .await?)
+    }
+
+    /// Our story sent at `sent_at`: who its send didn't reach, and what was
+    /// sent (to try them again). Returns its id.
+    pub async fn set_story_failed(&self, sent_at: i64, failed: &[String]) -> Result<Option<i64>> {
+        Ok(sqlx::query_scalar("UPDATE stories SET failed = ? WHERE author_key = '' AND sent_at = ? RETURNING id")
+            .bind(if failed.is_empty() { None } else { Some(serde_json::to_string(failed)?) })
+            .bind(sent_at)
+            .fetch_optional(&self.writer)
+            .await?)
+    }
+
+    /// Keeps our story's message as sent, for a retry.
+    pub async fn set_story_wire(&self, sent_at: i64, wire: &[u8]) -> Result<()> {
+        sqlx::query("UPDATE stories SET wire = ? WHERE author_key = '' AND sent_at = ?").bind(wire).bind(sent_at).execute(&self.writer).await?;
+        Ok(())
+    }
+
+    /// Our story's message as sent.
+    pub async fn story_wire(&self, id: i64) -> Result<Option<Vec<u8>>> {
+        Ok(sqlx::query_scalar::<_, Option<Vec<u8>>>("SELECT wire FROM stories WHERE id = ? AND author_key = ''").bind(id).fetch_optional(&self.pool).await?.flatten())
     }
 
     /// The stories still up, newest first.

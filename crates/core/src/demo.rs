@@ -847,6 +847,8 @@ async fn seed_stories(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
         ..story(None, None, HOUR, None, text("Packing for the weekend", StoryFont::Script, StoryBackground::Color(0xff4437d8)))
     };
     db.insert_story(&mine, now).await?;
+    // It didn't reach Sam: "Partially sent".
+    db.set_story_failed(mine.sent_at, &[aci(SAM).into()]).await?;
     db.add_story_view(mine.sent_at, aci(MAYA), now - 50 * MINUTE).await?;
     db.add_story_view(mine.sent_at, aci(JORDAN), now - 20 * MINUTE).await?;
     let reply = |who: &str, name: &str, ago: i64, body: &str, emoji: bool| StoryReply {
@@ -2105,6 +2107,13 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             }
             // Demo stories are here already.
             Command::FetchStory { .. } => {}
+            // The demo's retry reaches everyone.
+            Command::RetryStory { id } => {
+                if let Ok(Some(story)) = db.story(id).await {
+                    let _ = db.set_story_failed(story.sent_at, &[]).await;
+                    emit(Event::StoriesChanged);
+                }
+            }
             // A group story's reply shows with it; one to one, it goes nowhere.
             Command::ReplyToStory { id, body, emoji } => {
                 if let Ok(Some(story)) = db.story(id).await

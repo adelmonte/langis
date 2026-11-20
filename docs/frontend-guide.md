@@ -220,6 +220,9 @@ few times a second, and `Command::CancelDownload` stops it (it ends with
 A story's photo or video comes with `Command::FetchStory { id }` (then
 `StoriesChanged`); `Event::StoryDownloadFailed { id }` means it couldn't, and
 another `FetchStory` tries again.
+Our own story's `failed` lists who its send didn't reach (Desktop's "Send
+failed" when that's everyone, "Partially sent" otherwise);
+`Command::RetryStory { id }` sends it to them again.
 
 Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
 upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending

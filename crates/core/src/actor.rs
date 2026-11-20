@@ -1137,6 +1137,7 @@ impl Actor {
                 Command::PressMegaphone { id, cta } => self.press_megaphone(id, cta).await,
                 Command::ViewStory { id } => self.view_story(id).await,
                 Command::FetchStory { id } => self.fetch_story(id).await,
+                Command::RetryStory { id } => self.retry_story(id).await,
                 Command::ReplyToStory { id, body, emoji } => self.reply_to_story(id, body, emoji).await,
                 Command::PostStory { story, targets } => {
                     let this = self.clone();

@@ -653,6 +653,9 @@ pub enum Command {
     /// Replies to someone's story (or reacts, with `emoji`): one to one in
     /// your chat with them; a group's, with the story.
     ReplyToStory { id: i64, body: String, emoji: Option<String> },
+    /// Sends our story again to those its send didn't reach
+    /// (`Story::failed`; Desktop's "Click to retry").
+    RetryStory { id: i64 },
     /// Posts a story to each of `targets`.
     PostStory { story: OutgoingStory, targets: Vec<StoryTarget> },
     /// Saves a story list (My Story's privacy, or a custom story), here and
