@@ -1793,7 +1793,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                     let _ = events.unbounded_send(Event::Gifs { query, offset, result });
                 });
             }
-            Command::SendGif { conversation, gif, quote } => {
+            Command::SendGif { conversation, gif, quote, caption, .. } => {
                 let bytes = match crate::giphy::download(&gif.original.url).await {
                     Ok(bytes) => bytes,
                     Err(error) => {
@@ -1814,7 +1814,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                     direction: Direction::Outgoing,
                     author: None,
                     author_name: None,
-                    body: String::new(),
+                    body: caption.trim_end().to_owned(),
                     status: DeliveryStatus::Sent,
                     quote,
                     attachments: vec![AttachmentMeta {

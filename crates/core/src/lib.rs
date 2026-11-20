@@ -418,7 +418,16 @@ pub enum Command {
     SearchGifs { query: String, offset: u32 },
     /// Sends a GIF from search results, replying to `quote` (our row id)
     /// when given.
-    SendGif { conversation: ConversationId, gif: giphy::Gif, quote: Option<i64> },
+    SendGif {
+        conversation: ConversationId,
+        gif: giphy::Gif,
+        quote: Option<i64>,
+        /// The text sent with it (Desktop stages a GIF in the composer),
+        /// with its mentions and formatting as `SendFile`'s caption.
+        caption: String,
+        mentions: Vec<String>,
+        styles: Vec<langis_store::StyleSpan>,
+    },
     /// Lists installed sticker packs; answered with `Event::Stickers`.
     LoadStickers,
     /// Desktop's sticker manager opened: answered with

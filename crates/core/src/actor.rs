@@ -999,7 +999,9 @@ impl Actor {
                     let result = crate::search_gifs(&self.db, &cache, &query, offset).await;
                     self.emit(Event::Gifs { query, offset, result });
                 }
-                Command::SendGif { conversation, gif, quote } => self.send_gif(conversation, gif, quote).await,
+                Command::SendGif { conversation, gif, quote, caption, mentions, styles } => {
+                    self.send_gif(conversation, gif, quote, caption, mentions, styles).await
+                }
                 Command::LoadStickers => {
                     let packs = self.load_stickers().await;
                     self.emit(Event::Stickers(packs));
@@ -3014,7 +3016,16 @@ impl Actor {
     /// Downloads the GIF (through Signal's content proxy), shows it at once,
     /// and queues the upload. It replies to `quote` when given, as Desktop's
     /// GIF goes with the composer's quote (`sendMultiMediaMessage`).
-    async fn send_gif(self: Rc<Self>, conversation: ConversationId, gif: crate::giphy::Gif, quote: Option<i64>) {
+    #[allow(clippy::too_many_arguments)]
+    async fn send_gif(
+        self: Rc<Self>,
+        conversation: ConversationId,
+        gif: crate::giphy::Gif,
+        quote: Option<i64>,
+        caption: String,
+        mentions: Vec<String>,
+        styles: Vec<langis_store::StyleSpan>,
+    ) {
         let bytes = match crate::giphy::download(&gif.original.url).await {
             Ok(bytes) => bytes,
             Err(error) => return self.error("couldn't get the GIF", format!("{error:#}")),
@@ -3039,10 +3050,14 @@ impl Actor {
             transcode: false,
             blurhash: None,
         };
-        let Some((id, data, timestamp)) = self.store_outgoing(&conversation, String::new(), quote, vec![meta], None).await
+        let wire_caption = caption.trim_end().to_owned();
+        let wire_styles = mapping::wire_styles(&wire_caption, &styles);
+        let (caption, spans, style_spans) = self.render_body(&wire_caption, &mentions, &wire_styles).await;
+        let Some((id, mut data, timestamp)) = self.store_outgoing(&conversation, caption, quote, vec![meta], None).await
         else {
             return;
         };
+        self.add_ranges(id, &mut data, wire_caption, &mentions, &spans, &wire_styles, &style_spans).await;
         let size = (gif.original.width, gif.original.height);
         self.enqueue(Outbound::SendGif { conversation, body: data, timestamp, message: id, path, size });
     }
