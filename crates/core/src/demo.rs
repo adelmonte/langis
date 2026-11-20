@@ -1595,7 +1595,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 }
             }
             // Nothing fails offline.
-            Command::RetrySend { .. } => {}
+            Command::RetrySend { .. } | Command::RetryEdit { .. } => {}
             // The demo has no network: a retried delete goes at once.
             Command::RetryDeleteForEveryone { message_id } => {
                 let Ok(Some(m)) = db.message(message_id).await else { continue };

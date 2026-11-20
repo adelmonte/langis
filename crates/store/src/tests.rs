@@ -3147,3 +3147,15 @@ async fn favorite_stickers_stop_at_the_limit() {
     db.unfavorite_sticker("aa", 0, 6).await.unwrap();
     assert!(matches!(db.favorite_sticker("bb", "k", 1, 7).await.unwrap(), Favorited::Added(_)));
 }
+
+#[tokio::test]
+async fn edit_status_shows_failures_and_keeps_receipts() {
+    let db = test_db().await;
+    let id = db.insert_message(&NewMessage { status: DeliveryStatus::Read, ..outgoing("d:b", 100, "hi") }).await.unwrap();
+    assert!(!db.set_edit_status(id, DeliveryStatus::Sent).await.unwrap(), "a good edit leaves Read alone");
+    assert_eq!(db.message(id).await.unwrap().unwrap().status, DeliveryStatus::Read);
+    assert!(db.set_edit_status(id, DeliveryStatus::Failed).await.unwrap());
+    assert_eq!(db.message(id).await.unwrap().unwrap().status, DeliveryStatus::Failed);
+    assert!(db.set_edit_status(id, DeliveryStatus::Sent).await.unwrap(), "a retry that works clears it");
+    assert_eq!(db.message(id).await.unwrap().unwrap().status, DeliveryStatus::Sent);
+}

@@ -199,11 +199,14 @@ enum Outbound {
         preview_image: Option<std::path::PathBuf>,
     },
     /// An edit whose link preview has an image to upload first.
+    /// An edit of our message `message`, its link preview's image (when
+    /// there's one here) uploaded first; a failure shows on the message.
     SendEdit {
         conversation: ConversationId,
         edit: presage::proto::EditMessage,
         timestamp: u64,
-        preview_image: std::path::PathBuf,
+        message: i64,
+        preview_image: Option<std::path::PathBuf>,
     },
     /// A GIF: its MP4 is uploaded with Signal's GIF flag.
     SendGif {
@@ -420,7 +423,6 @@ impl Outbound {
     fn chat(&self) -> Option<&ConversationId> {
         match self {
             Outbound::Send { conversation, message: Some(_), .. }
-            | Outbound::Send { conversation, body: ContentBody::EditMessage(_), .. }
             | Outbound::SendEdit { conversation, .. }
             | Outbound::Delete { conversation, .. }
             | Outbound::SendImages { conversation, .. }
@@ -1066,6 +1068,7 @@ impl Actor {
                 Command::Typing { conversation, started } => self.typing(conversation, started).await,
                 Command::DeleteForMe { message_ids } => self.delete_for_me(message_ids).await,
                 Command::RetrySend { message_id } => self.retry_send(message_id).await,
+                Command::RetryEdit { message_id } => self.retry_edit(message_id).await,
                 Command::EditMessage { message_id, body, mentions, styles, preview } => {
                     self.edit_message(message_id, body, mentions, styles, preview).await
                 }
@@ -3967,10 +3970,41 @@ impl Actor {
         }
         self.emit(Event::MessageChanged { conversation: conversation.clone(), message_id });
         self.emit(Event::ConversationsChanged);
+        self.send_edit(&message, wire_body, &mentions, &wire_styles, link_preview, timestamp).await;
+    }
+
+    /// Desktop's "Send again" for a failed edit: what the message says now,
+    /// as a new edit of it.
+    async fn retry_edit(&self, message_id: i64) {
+        let Some(message) = self.db.message(message_id).await.ok().flatten() else { return };
+        if message.direction != Direction::Outgoing || !message.edited || message.status != DeliveryStatus::Failed {
+            return;
+        }
+        let (wire_body, mentions) = mapping::placeholders_for(&message.body, &message.mentions);
+        // The formatting is kept where no mention moved it.
+        let wire_styles = if mentions.is_empty() { mapping::wire_styles(&wire_body, &message.styles) } else { Vec::new() };
+        let _ = self.db.set_edit_status(message_id, DeliveryStatus::Sending).await;
+        self.emit(Event::MessageChanged { conversation: message.conversation_id.clone(), message_id });
+        let timestamp = self.next_timestamp() as u64;
+        let preview = message.link_preview.clone();
+        self.send_edit(&message, wire_body, &mentions, &wire_styles, preview, timestamp).await;
+    }
+
+    /// Queues an edit of our `message` saying `wire_body`.
+    async fn send_edit(
+        &self,
+        message: &langis_store::Message,
+        wire_body: String,
+        mentions: &[String],
+        wire_styles: &[mapping::WireStyle],
+        link_preview: Option<LinkPreview>,
+        timestamp: u64,
+    ) {
+        let conversation = message.conversation_id.clone();
         let self_aci = self.self_aci();
         let config = crate::remote_config::current();
-        let mut body_ranges = mapping::mention_ranges(&wire_body, &mentions, &config);
-        body_ranges.extend(mapping::style_ranges(&wire_styles));
+        let mut body_ranges = mapping::mention_ranges(&wire_body, mentions, &config);
+        body_ranges.extend(mapping::style_ranges(wire_styles));
         let mut data = DataMessage {
             body_ranges,
             body: Some(wire_body),
@@ -4005,10 +4039,7 @@ impl Actor {
             target_sent_timestamp: Some(message.sent_at as u64),
             data_message: Some(data),
         };
-        match preview_image {
-            Some(preview_image) => self.enqueue(Outbound::SendEdit { conversation, edit, timestamp, preview_image }),
-            None => self.enqueue(Outbound::Send { conversation, body: ContentBody::EditMessage(edit), timestamp, message: None }),
-        }
+        self.enqueue(Outbound::SendEdit { conversation, edit, timestamp, message: message.id, preview_image });
     }
 
     /// Sends a failed message again from what we stored, with its original
@@ -5128,21 +5159,27 @@ impl Actor {
                     };
                     self.finish_send(&conversation, message, timestamp, status).await;
                 }
-                Outbound::SendEdit { conversation, mut edit, timestamp, preview_image } => {
+                Outbound::SendEdit { conversation, mut edit, timestamp, message, preview_image } => {
                     // The edit still goes if its image doesn't, as a quote's
                     // thumbnail does.
-                    match self.upload_preview_image(&manager, &preview_image).await {
-                        Ok(pointer) => {
-                            if let Some(preview) = edit.data_message.as_mut().and_then(|d| d.preview.first_mut()) {
-                                preview.image = Some(pointer);
+                    if let Some(preview_image) = preview_image {
+                        match self.upload_preview_image(&manager, &preview_image).await {
+                            Ok(pointer) => {
+                                if let Some(preview) = edit.data_message.as_mut().and_then(|d| d.preview.first_mut()) {
+                                    preview.image = Some(pointer);
+                                }
                             }
+                            Err(error) => warn!(error = %format!("{error:#}"), "edit sent without its link preview image"),
                         }
-                        Err(error) => warn!(error = %format!("{error:#}"), "edit sent without its link preview image"),
                     }
                     let delivery =
                         self.deliver_to(&mut manager, &conversation, ContentBody::EditMessage(edit), timestamp, None).await;
-                    self.report(&conversation, &delivery);
+                    let status = self.report(&conversation, &delivery);
                     self.untracked_challenge(&delivery).await;
+                    // Desktop's "Edit failed" on the message, or cleared.
+                    if self.db.set_edit_status(message, status).await.unwrap_or(false) {
+                        self.emit(Event::MessageChanged { conversation: conversation.clone(), message_id: message });
+                    }
                 }
                 Outbound::SendGif { conversation, mut body, timestamp, message, path, size } => {
                     let status = match self.upload_gif(&manager, &path, size).await {

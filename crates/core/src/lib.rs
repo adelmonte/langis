@@ -530,6 +530,9 @@ pub enum Command {
     },
     /// Sends a failed message again, with its original timestamp.
     RetrySend { message_id: i64 },
+    /// Sends a failed edit again (Desktop's "Send again"): the message as
+    /// it now reads, as a new edit.
+    RetryEdit { message_id: i64 },
     /// Sends copies of messages (text, photos, GIFs, link previews) to
     /// other chats, as Desktop's "Forward". `body`, for a single message,
     /// is its text as edited before sending (Desktop's

@@ -2476,6 +2476,24 @@ impl AppDb {
     /// Outgoing messages: status only moves forward (Sending < Sent < Delivered < Read),
     /// except Failed which can be set from Sending.
     /// A failed message is being sent again.
+    /// An edit's send of our message `id` went `status` (Desktop shows a
+    /// failed edit on the message: "Edit failed"). Success only clears a
+    /// failure, so the message keeps its delivered and read states.
+    pub async fn set_edit_status(&self, id: i64, status: DeliveryStatus) -> Result<bool> {
+        let done = if status == DeliveryStatus::Failed {
+            sqlx::query("UPDATE messages SET status = ? WHERE id = ? AND direction = 1").bind(status_to_i64(status)).bind(id).execute(&self.writer).await?
+        } else {
+            sqlx::query("UPDATE messages SET status = ? WHERE id = ? AND direction = 1 AND status IN (?, ?)")
+                .bind(status_to_i64(DeliveryStatus::Sent))
+                .bind(id)
+                .bind(status_to_i64(DeliveryStatus::Failed))
+                .bind(status_to_i64(DeliveryStatus::Sending))
+                .execute(&self.writer)
+                .await?
+        };
+        Ok(done.rows_affected() > 0)
+    }
+
     pub async fn mark_resending(&self, message_id: i64) -> Result<bool> {
         // Failed, or partly sent (a resend to those it missed).
         let done = sqlx::query("UPDATE messages SET status = ? WHERE id = ? AND status IN (?, ?, ?)")
