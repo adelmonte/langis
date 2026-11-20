@@ -182,6 +182,12 @@ if anyone is listed (or a send failed that way), show who and offer
 "Send anyway". That's `Command::SetVerified { conversation, verified: false }`
 for each of them, then `Command::RetrySend` for a failed message.
 
+**Links in messages.** Draw a link as a link only when it's `http`,
+`https` or `mailto` and `langis_core::link_preview::is_link_sneaky(href)`
+is false (Desktop's `Linkify`); a sneaky one (credentials in it, an IP
+address, mixed scripts in the domain, odd characters in the path) stays
+plain text.
+
 Mark a chat read when the user looks at it: `Command::MarkRead { conversation }`.
 That also tells the phone and, with read receipts on, the sender.
 

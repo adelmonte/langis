@@ -71,6 +71,13 @@ fn is_domain_excluded(url: &Url) -> bool {
         .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
 }
 
+/// Desktop's `isLinkSneaky` for a link in a message's text: one that is
+/// sneaky is shown as plain text, not a link (`ts/components/conversation/Linkify`).
+/// An `http`/`https` link that doesn't parse counts as sneaky.
+pub fn is_link_sneaky(href: &str) -> bool {
+    Url::parse(href).map_or(true, |url| is_sneaky(href, &url))
+}
+
 /// Desktop's `isLinkSneaky`, where "maybe" also counts.
 fn is_sneaky(href: &str, url: &Url) -> bool {
     if href.len() > MAX_HREF_LENGTH || href.chars().any(|c| ('\u{2500}'..='\u{25FF}').contains(&c)) {
