@@ -1074,8 +1074,11 @@ impl Actor {
                 Command::DeleteForEveryone { message_id } => self.delete_for_everyone(message_id).await,
                 Command::RetryDeleteForEveryone { message_id } => self.retry_delete_for_everyone(message_id).await,
                 Command::FetchAttachment { message_id, index } => {
+                    // Asking again undoes an earlier cancel.
+                    self.cancelled_downloads.borrow_mut().remove(&(message_id, index));
                     self.fetch_attachment(message_id, index).await
                 }
+                Command::FetchPreviewImage { message_id } => self.fetch_preview_image(message_id, true).await,
                 Command::CancelDownload { message_id, index } => {
                     self.cancelled_downloads.borrow_mut().insert((message_id, index));
                 }
@@ -1772,14 +1775,9 @@ impl Actor {
                                 started: false,
                             });
                         }
-                        // A link preview's image comes with the message, whatever the
-                        // auto-download settings say (Desktop's `queuePreviews` in
-                        // ts/util/queueAttachmentDownloads queues it unconditionally).
-                        if let Some(pointer) = preview_image.filter(|p| {
-                            !held
-                                && p.content_type.as_deref().is_some_and(|c| c.starts_with("image/"))
-                                && p.size.is_some_and(|size| crate::remote_config().auto_downloads(u64::from(size)))
-                        }) {
+                        // A link preview's image downloads as a photo would (Desktop's
+                        // `queuePreviews` checks `isAutoDownloadEnabled(image, 'photos')`).
+                        if let Some(pointer) = preview_image.filter(|p| !held && preview_image_ok(p, false)) {
                             let sent_at = message.sent_at;
                             let this = self.clone();
                             let manager = manager.clone();
@@ -5877,7 +5875,9 @@ impl Actor {
 
     /// Downloads a message's link preview image from its stored message,
     /// for one held back while its chat was a message request.
-    pub(super) async fn fetch_preview_image(self: &Rc<Self>, message_id: i64) {
+    /// `manual`: asked for by the user (`Command::FetchPreviewImage`),
+    /// which skips the photos auto-download setting.
+    pub(super) async fn fetch_preview_image(self: &Rc<Self>, message_id: i64, manual: bool) {
         let Some(manager) = self.manager() else { return };
         let Some(message) = self.db.message(message_id).await.ok().flatten() else { return };
         if message.link_preview.as_ref().and_then(|p| p.image.as_ref()).is_none_or(|i| i.local_path.is_some()) {
@@ -5899,7 +5899,7 @@ impl Actor {
             Err(error) => return debug!(%error, "couldn't read the stored message for a link preview image"),
         };
         let pointer = data_message_of(&content.body).and_then(|dm| dm.preview.first()).and_then(|p| p.image.clone());
-        if let Some(pointer) = pointer {
+        if let Some(pointer) = pointer.filter(|p| preview_image_ok(p, manual)) {
             self.download_preview_image(&manager, message.conversation_id, message_id, message.sent_at, &pointer).await;
         }
     }
@@ -6064,7 +6064,6 @@ impl Actor {
         }
         // Progress for the frontend, at most every 250ms, and a stop when
         // it's cancelled.
-        self.cancelled_downloads.borrow_mut().remove(&(message_id, index));
         let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
         let progress = |received: u64| {
             if self.cancelled_downloads.borrow().contains(&(message_id, index)) {
@@ -6372,6 +6371,16 @@ impl Actor {
             Err(error) => self.error("failed to record link preview image", error),
         }
     }
+}
+
+/// Whether a link preview's image may download: an image of a known size
+/// under the receive limit, and (unless the user asked) as photos
+/// auto-download.
+fn preview_image_ok(pointer: &AttachmentPointer, manual: bool) -> bool {
+    let size = pointer.size.map(u64::from);
+    pointer.content_type.as_deref().is_some_and(|c| c.starts_with("image/"))
+        && size.is_some_and(|s| !crate::remote_config().too_big_to_receive(s))
+        && (manual || (crate::auto_download::current().photos && size.is_some_and(|s| crate::remote_config().auto_downloads(s))))
 }
 
 /// What a quote of `message` says it holds: its first attachment, or for a

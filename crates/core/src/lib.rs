@@ -542,6 +542,9 @@ pub enum Command {
     /// Downloads every attachment of `message_id` not yet downloaded, one at
     /// a time (Desktop's "Download N items" on a grid).
     FetchAttachments { message_id: i64 },
+    /// Downloads a message's link preview image, when the photos
+    /// auto-download setting left it (Desktop downloads it on a click).
+    FetchPreviewImage { message_id: i64 },
     /// Stops attachment `index` of `message_id` downloading (Desktop's
     /// cancel on a download in progress); it's left not downloaded.
     CancelDownload { message_id: i64, index: usize },

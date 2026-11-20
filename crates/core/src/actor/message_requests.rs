@@ -256,7 +256,7 @@ impl Actor {
                 this.clone().fetch_attachment(id, index).await;
             }
             for id in previews {
-                this.fetch_preview_image(id).await;
+                this.fetch_preview_image(id, false).await;
             }
         });
     }

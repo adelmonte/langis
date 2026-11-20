@@ -196,7 +196,8 @@ per kind (photos, videos, audio, documents), and stickers and short voice
 messages always come. Anything not downloaded waits for
 `Command::FetchAttachment { message_id, index }`. `MessageChanged` follows
 when the file is ready.
-While one downloads, `Event::DownloadProgress` reports the bytes received a
+A link preview's image downloads as photos do; when that setting leaves it,
+`Command::FetchPreviewImage` gets it. While one downloads, `Event::DownloadProgress` reports the bytes received a
 few times a second, and `Command::CancelDownload` stops it (it ends with
 `received` 0). Files from transferred history download without progress.
 
