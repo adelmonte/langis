@@ -5908,7 +5908,10 @@ impl Actor {
         // From transferred history: no stored message, but its locator.
         if let Some(meta) = message.attachments.get(index).filter(|a| a.remote.is_some()) {
             if let Err(error) = self.download_remote(&manager, &message.conversation_id, message_id, index, meta).await {
-                self.error("couldn't download the attachment", format!("{error:#}"));
+                let text = format!("{error:#}");
+                let permanent = text.contains("404") || text.to_lowercase().contains("not found");
+                self.emit(Event::AttachmentUnavailable { message_id, index, permanent });
+                self.error("couldn't download the attachment", text);
                 // Desktop falls back to the backup thumbnail.
                 if let Err(error) = self.fetch_thumbnail(&manager, &message, index, meta).await {
                     debug!(error = %format!("{error:#}"), "backup thumbnail download failed");
@@ -5928,11 +5931,18 @@ impl Actor {
         };
         let content = match manager.store().message(&thread, message.sent_at as u64).await {
             Ok(Some(content)) => content,
-            Ok(None) => return self.error("attachment unavailable", "original message not found"),
-            Err(error) => return self.error("attachment unavailable", error),
+            Ok(None) => {
+                self.emit(Event::AttachmentUnavailable { message_id, index, permanent: true });
+                return self.error("attachment unavailable", "original message not found");
+            }
+            Err(error) => {
+                self.emit(Event::AttachmentUnavailable { message_id, index, permanent: false });
+                return self.error("attachment unavailable", error);
+            }
         };
         let pointer = data_message_of(&content.body).and_then(|dm| mapping::normal_attachments(dm).nth(index).cloned());
         let Some(pointer) = pointer else {
+            self.emit(Event::AttachmentUnavailable { message_id, index, permanent: true });
             return self.error("attachment unavailable", "no such attachment");
         };
         self.download(&manager, message.conversation_id, message_id, message.sent_at, index, &pointer).await;
@@ -6150,6 +6160,10 @@ impl Actor {
             }
             Err(error) => {
                 self.emit(Event::DownloadProgress { message_id, index, received: 0, total: size });
+                // Desktop's `isPermanentlyUndownloadable`: gone from the CDN.
+                let text = error.to_string();
+                let permanent = text.contains("404") || text.contains("NotFound") || text.to_lowercase().contains("not found");
+                self.emit(Event::AttachmentUnavailable { message_id, index, permanent });
                 return self.error("failed to download attachment", error);
             }
         };

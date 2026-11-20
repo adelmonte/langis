@@ -1366,6 +1366,10 @@ pub enum Event {
     /// size, 0 if unknown), a few times a second. `MessageChanged` follows
     /// when it's done; a cancelled or failed one ends with `received` 0.
     DownloadProgress { message_id: i64, index: usize, received: u64, total: u64 },
+    /// An attachment couldn't be downloaded: `permanent` when it's gone
+    /// (Desktop's "This media is not available"), otherwise it can be
+    /// tried again with `FetchAttachment`.
+    AttachmentUnavailable { message_id: i64, index: usize, permanent: bool },
     /// Stored author names changed: `(service id, name)` pairs. Loaded
     /// messages and quotes by these authors should take the new names.
     AuthorNamesChanged(Vec<(String, String)>),
