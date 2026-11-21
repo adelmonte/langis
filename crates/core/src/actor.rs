@@ -1126,6 +1126,7 @@ impl Actor {
                 Command::AnswerJoinRequest { conversation, member, approve } => {
                     self.answer_join_request(conversation, member, approve).await
                 }
+                Command::BlockGroupLinkRequests { conversation, member } => self.block_group_link_requests(conversation, member).await,
                 Command::RevokeGroupInvites { conversation, invitees } => self.revoke_group_invites(conversation, invitees).await,
                 Command::CancelJoinRequest { conversation } => self.cancel_join_request(conversation).await,
                 Command::OpenGroupLink { url } => self.open_group_link(url).await,

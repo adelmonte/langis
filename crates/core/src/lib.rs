@@ -606,6 +606,10 @@ pub enum Command {
     ChangeGroupLink { conversation: ConversationId, change: group_admin::LinkChange },
     /// Approves or turns down a request to join (an ACI).
     AnswerJoinRequest { conversation: ConversationId, member: String, approve: bool },
+    /// Bans someone (an ACI) from joining or asking to join by the link,
+    /// turning down a request they have open: the "Block request" on a
+    /// `GroupNotice::RequestBounce` (Desktop's `blockGroupLinkRequests`).
+    BlockGroupLinkRequests { conversation: ConversationId, member: String },
     /// Revokes invitations (service ids).
     RevokeGroupInvites { conversation: ConversationId, invitees: Vec<String> },
     /// Takes back our request to join a group.

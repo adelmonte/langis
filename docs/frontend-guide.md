@@ -181,6 +181,15 @@ here at once and on other devices through Storage Service. A
 `Conversation` carries them back, with `blocked_at` (when it was blocked)
 and a person's profile `about`.
 
+**Repeated requests to join.** A request to join by a group's link and
+its withdrawal by the requester fold into the chat's latest notice when it
+is about the same person: `GroupNotice::RequestBounce { member, times,
+pending }` (Desktop's "requested and canceled 2 requests", followed by
+"requested to join" while `pending`). An admin's "Block request" on it is
+`Command::BlockGroupLinkRequests { conversation, member }`: they're banned
+from the link (into `group_state.banned`). Desktop shows the button to
+admins while they're neither a member nor banned.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified

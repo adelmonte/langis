@@ -2468,6 +2468,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             | Command::SetGroupPermission { .. }
             | Command::ChangeGroupLink { .. }
             | Command::AnswerJoinRequest { .. }
+            | Command::BlockGroupLinkRequests { .. }
             | Command::RevokeGroupInvites { .. }
             | Command::CancelJoinRequest { .. }
             | Command::OpenGroupLink { .. }

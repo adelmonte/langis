@@ -178,6 +178,17 @@ impl Actor {
         .await;
     }
 
+    /// Desktop's `blockGroupLinkRequests`; an open request is turned down,
+    /// and they're told.
+    pub(super) async fn block_group_link_requests(self: Rc<Self>, conversation: ConversationId, member: String) {
+        let Some(target) = Aci::parse_from_service_id_string(&member) else { return };
+        let limit = crate::remote_config().group_size_hard_limit();
+        self.admin_change(&conversation, "couldn't block their requests", vec![member], async |session, group, me, actions| {
+            admin::block_requests(&session.secret, group, me, target, limit, actions)
+        })
+        .await;
+    }
+
     pub(super) async fn revoke_group_invites(self: Rc<Self>, conversation: ConversationId, invitees: Vec<String>) {
         let targets: Vec<ServiceId> = invitees.iter().filter_map(|s| ServiceId::parse_from_service_id_string(s)).collect();
         self.admin_change(&conversation, "couldn't revoke the invitation", invitees, async |session, group, _, actions| {

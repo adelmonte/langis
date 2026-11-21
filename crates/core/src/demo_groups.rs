@@ -32,7 +32,8 @@ fn new_link(conversation: &ConversationId, approval: bool) -> Option<GroupLink> 
 }
 
 /// Seeds the demo's group administration: the house group (ours to run)
-/// has its link on with approval, a request from Priya and an invitation
+/// has its link on with approval, a request from Priya (after two she
+/// took back) and an invitation
 /// for Sam; and Maya invited us to a cleanup crew.
 pub(crate) async fn seed(db: &AppDb, house: &str, invited: &str, maya: &str, jordan: &str, priya: &str, sam: &str) -> langis_store::Result<()> {
     let at = now();
@@ -44,6 +45,10 @@ pub(crate) async fn seed(db: &AppDb, house: &str, invited: &str, maya: &str, jor
         ..Default::default()
     };
     db.upsert_conversation(&house, ConversationUpdate { group_state: Some(state), ..Default::default() }).await?;
+    // Priya asked and took it back twice before asking again (Desktop's
+    // "requested and canceled", with its Block request).
+    let bounce = GroupNotice::RequestBounce { member: priya.into(), times: 2, pending: true };
+    db.insert_notice(&house, at - 60 * 60_000, &Notice::Group { by: Some(priya.into()), change: bounce }).await?;
     let invited = ConversationId(invited.into());
     db.upsert_conversation(
         &invited,
@@ -175,6 +180,19 @@ pub(crate) async fn handle(db: &AppDb, data_dir: &Path, command: &Command, emit:
             update.group_state = Some(state);
             save(conversation.clone(), update).await;
             notice(conversation, change).await;
+        }
+        Command::BlockGroupLinkRequests { conversation, member } => {
+            let Some(group) = chat(conversation.clone()).await else { return true };
+            let mut state = group.group_state.clone();
+            let asking = state.requests.iter().any(|r| r.aci == member);
+            state.requests.retain(|r| r.aci != member);
+            if !state.banned.contains(&member) {
+                state.banned.push(member.clone());
+            }
+            save(conversation.clone(), ConversationUpdate { group_state: Some(state), ..Default::default() }).await;
+            if asking {
+                notice(conversation, GroupNotice::RequestRemoved { member: Some(member) }).await;
+            }
         }
         Command::RevokeGroupInvites { conversation, invitees } => {
             let Some(group) = chat(conversation.clone()).await else { return true };
