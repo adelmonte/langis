@@ -283,7 +283,15 @@ async fn notices_pass_the_validator_and_come_back() {
             db.insert_notice(chat, at, notice).await.unwrap();
         }
     }
+    // A group call: exported (Desktop's `toGroupCall`) and checked by the
+    // validator; the history import doesn't read calls back.
+    for status in [langis_store::GroupCallStatus::Ringing, langis_store::GroupCallStatus::Joined] {
+        at += 1000;
+        let call = Notice::GroupCall { by: m(), era: None, call_id: Some(at), status: Some(status), incoming: true, unseen: false };
+        db.insert_notice(&group, at, &call).await.unwrap();
+    }
     let frames = frames(&db, &keys, &[7; 32], at + 1000).await.unwrap();
+    assert!(!frames.stats.skipped.contains_key("group call"), "group calls are exported");
     let encrypted = encrypt(&frames.plain, &keys).unwrap();
     validate(&encrypted, &keys).unwrap();
     let fresh = AppDb::open_in_memory().await.unwrap();

@@ -853,7 +853,7 @@ async fn chat_item(
     item.chatId = chat_id;
     item.dateSent = message.sent_at.max(0) as u64;
     if let Some(notice) = &message.notice {
-        let Some((author, update)) = notice_update(recipients, chat, notice) else {
+        let Some((author, update)) = notice_update(recipients, chat, notice, message.sent_at) else {
             stats.skip(notice_kind(notice));
             return Ok(None);
         };
@@ -1191,7 +1191,7 @@ fn notice_kind(notice: &Notice) -> &'static str {
 /// A notice as an update and its author (Desktop's `toChatItemUpdate`, and
 /// the reverse of `history.rs`'s `update_notices`). `None` for notices the
 /// backup format has no update for.
-fn notice_update(recipients: &mut Recipients, chat: &Conversation, notice: &Notice) -> Option<(u64, proto::chat_update_message::Update)> {
+fn notice_update(recipients: &mut Recipients, chat: &Conversation, notice: &Notice, sent_at: i64) -> Option<(u64, proto::chat_update_message::Update)> {
     use proto::chat_update_message::Update;
     use proto::simple_chat_update::Type;
     let me = recipients.self_id;
@@ -1305,6 +1305,31 @@ fn notice_update(recipients: &mut Recipients, chat: &Conversation, notice: &Noti
                 Some(sid) => recipients.person(Some(sid)).unwrap_or(me),
             };
             (author, group_change(group_updates(recipients, by.as_deref(), change)?))
+        }
+        // Desktop's `toGroupCall`: who started it, its state, when.
+        Notice::GroupCall { by, call_id, status, .. } if chat.kind == ConversationKind::Group => {
+            use langis_store::GroupCallStatus as S;
+            use proto::group_call::State;
+            let state = match status {
+                Some(S::Generic) | None => State::GENERIC,
+                Some(S::OutgoingRing) => State::OUTGOING_RING,
+                Some(S::Ringing) => State::RINGING,
+                Some(S::Joined) => State::JOINED,
+                Some(S::Accepted) => State::ACCEPTED,
+                Some(S::Missed) => State::MISSED,
+                Some(S::Declined) => State::DECLINED,
+            };
+            let started = recipients.person(by.as_deref());
+            let call = proto::GroupCall {
+                callId: call_id.map(|id| id as u64),
+                state: state.into(),
+                startedCallRecipientId: started,
+                ringerRecipientId: started.filter(|_| matches!(status, Some(S::Ringing | S::Accepted | S::Declined | S::Missed | S::OutgoingRing))),
+                startedCallTimestamp: sent_at.max(0) as u64,
+                read: true,
+                ..Default::default()
+            };
+            (started.unwrap_or(me), Update::GroupCall(call))
         }
         // Desktop does not export its default-timer notice either.
         Notice::GroupCall { .. } | Notice::ContactRemoved | Notice::Call { .. } | Notice::UniversalTimer { .. } => return None,
