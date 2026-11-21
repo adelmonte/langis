@@ -14,31 +14,53 @@ targets Linux.
 
 ## Status
 
-Early, but in daily use. What has been checked so far, on Linux:
+In daily use through [langis-gui](https://github.com/adelmonte/langis-gui)
+since November 2026, linked to a real phone. Its behavior follows Signal
+Desktop's source, checked through Desktop 8.39 (`.signal-desktop-hash`).
+578 tests pass (`cargo test --workspace`), the vendored libraries' own
+included.
 
-- Linking to a real phone as a secondary device, and everyday messaging
-  against Signal's servers, through [langis-gui](https://github.com/adelmonte/langis-gui)
-  since November 2026.
-- The workspace builds, and its 500+ tests pass (`cargo test --workspace`),
-  the vendored libraries' own included.
+<details>
+<summary><b>What it does</b></summary>
+
+- Linking as a secondary device, with the history transfer; relinking
+  keeps your data.
+- Messages of every kind Desktop sends and shows, edits, deletes,
+  reactions, polls, view-once, stickers and sticker packs (and making
+  them), GIFs, link previews, long messages, private replies.
+- Groups and their administration, group links, join requests, member
+  labels; story posting, replies and privacy.
+- Sync with your other devices: Storage Service (contacts, groups, chat
+  settings, folders, story lists, notification profiles, stickers,
+  username), read and view syncs, message requests, blocking.
+- Calls through RingRTC: 1:1, groups, call links, screen sharing.
+- Notification profiles, per-chat mute options and unread reminders, as
+  decisions a frontend asks about.
+- Backups: Signal Secure Backups' status and media download, and Desktop
+  backups to a folder (checked with libsignal's backup validator).
+- Safety numbers, key transparency, sealed sender, sender keys.
+
+</details>
+
+<details>
+<summary><b>Checked and not checked</b></summary>
+
+- Calls on Linux, in real use (audio through WebRTC's PulseAudio support,
+  which PipeWire also serves; the camera through PipeWire, else V4L2).
 - The demo backend runs end to end: `cargo run -p langis-core --example demo_frontend`.
-- Calls on Linux, in real use (audio goes through WebRTC's PulseAudio
-  support, which PipeWire also serves; the camera through PipeWire, which
-  covers laptop MIPI cameras through libcamera, else V4L2).
 - A code review for security (November 2026) of the core, the calls code,
   Storage Service sync, key transparency and every vendored change. Its
   findings are fixed; see `git log`. It was a code reading by AI reviewers,
-  not a professional audit.
-
-Not checked yet:
-
-- Screen sharing in a real call. The capture half (the desktop portal's
-  picker, then frames over PipeWire, scaled to the chosen quality) passes
-  `scripts/screen-share-test.sh`, which runs it in a throwaway headless
-  sway session. GNOME's and KDE's portals haven't been tried.
+  not a professional audit. Features added since haven't had one.
+- Not checked yet: screen sharing in a real call (the capture half passes
+  `scripts/screen-share-test.sh` in a headless sway session), a Desktop
+  backup restored on a phone, and the newest features against a real
+  account.
 
 Videos are re-encoded smaller before sending, as Desktop does, when
 `ffmpeg` (with libx264) is installed; without it they go as they are.
+
+</details>
 
 ## Crates
 
