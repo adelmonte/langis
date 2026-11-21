@@ -319,3 +319,27 @@ async fn edits_come_back_with_their_history() {
     let back_history = fresh.edit_history(back.id).await.unwrap();
     assert_eq!(back_history.iter().map(|r| (r.sent_at, r.body.as_str())).collect::<Vec<_>>(), [(original.sent_at, original.body.as_str())]);
 }
+
+#[test]
+fn the_padded_gzip_holds_the_stream_and_hides_its_size() {
+    use std::io::Read as _;
+    use protobuf::Message as _;
+    // BackupInfo, then a recipient and a run of chat items, delimited.
+    let mut plain = Vec::new();
+    super::put(&mut plain, &proto::BackupInfo::new()).unwrap();
+    let mut recipient = proto::Frame::new();
+    recipient.item = Some(proto::frame::Item::Recipient(proto::Recipient::new()));
+    super::put(&mut plain, &recipient).unwrap();
+    for i in 0..2000 {
+        let mut item = proto::ChatItem::new();
+        item.dateSent = i;
+        let mut frame = proto::Frame::new();
+        frame.item = Some(proto::frame::Item::ChatItem(item));
+        super::put(&mut plain, &frame).unwrap();
+    }
+    let gz = super::padded_gzip(&plain).unwrap();
+    assert!(gz.len() as u64 >= libsignal_message_backup::padding::MINIMUM_BACKUP_BYTES, "padded to libsignal's floor");
+    let mut back = Vec::new();
+    flate2::read::GzDecoder::new(&gz[..]).read_to_end(&mut back).unwrap();
+    assert_eq!(back, plain, "the zeros after the gzip aren't part of it");
+}

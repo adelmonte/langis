@@ -9,7 +9,8 @@
 //! ```text
 //! <folder>/SignalBackups/
 //!   signal-backup-YYYY-MM-DD-HH-MM-SS/   one per backup, the newest two kept
-//!     main       the backup: BackupInfo and frames, gzipped, AES-256-CBC
+//!     main       the backup: BackupInfo and frames, gzipped with flushes and
+//!                padded as Desktop does, AES-256-CBC
 //!                and HMAC-SHA256 with the message backup key derived from
 //!                the account entropy pool's backup key and our backup id
 //!     metadata   `signal.backup.local.Metadata`: the version and the
@@ -1493,24 +1494,149 @@ fn group_updates(recipients: &Recipients, by: Option<&str>, change: &GroupNotice
 }
 
 /// Gzips and encrypts a backup's frames as Desktop's `#runExport` does for
-/// `encrypted`: a random IV, AES-256-CBC, HMAC-SHA256 over both, with the
-/// message backup key (libsignal's `MessageBackupKey` from the backup key
-/// and our backup id). Desktop also pads the gzip with zeros to hide its
-/// size; that isn't done here.
+/// `encrypted`: the padded gzip ([`padded_gzip`]), then a random IV,
+/// AES-256-CBC, HMAC-SHA256 over both, with the message backup key
+/// (libsignal's `MessageBackupKey` from the backup key and our backup id).
 pub(crate) fn encrypt(plain: &[u8], keys: &AccountKeys) -> anyhow::Result<Vec<u8>> {
-    use std::io::Write as _;
     use libsignal_message_backup::key::MessageBackupKey;
     let backup_key = keys.backup_key()?;
     let backup_id = backup_key.derive_backup_id(&keys.aci);
     let key = MessageBackupKey::derive(&backup_key, &backup_id, None);
-    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gz.write_all(plain)?;
-    let mut data = gz.finish()?;
+    let mut data = padded_gzip(plain)?;
     let mut combined = [0u8; 64];
     combined[..32].copy_from_slice(&key.aes_key);
     combined[32..].copy_from_slice(&key.hmac_key);
     presage::libsignal_service::attachment_cipher::encrypt_in_place(rand::random(), combined, &mut data);
     Ok(data)
+}
+
+/// Desktop's `toPaddedGzipIterable` (ts/services/backups/encoding.node.ts):
+/// the stream gzipped with full flushes (so no DEFLATE block spans what
+/// they separate) after the BackupInfo, around the account and recipient
+/// frames and any other frame among the chat items, and through the chat
+/// items at libsignal's `flush_interval`s; then zeros after the gzip,
+/// `padding_size` of them from the largest chat item block, so the size
+/// says little about what's inside.
+fn padded_gzip(plain: &[u8]) -> anyhow::Result<Vec<u8>> {
+    use flate2::{Compress, Compression, FlushCompress};
+    use libsignal_message_backup::padding::{flush_interval, padding_size};
+    use protobuf::Message as _;
+
+    /// Deflates `input` into `out`, all of it and then `flush`.
+    fn deflate(z: &mut Compress, mut input: &[u8], out: &mut Vec<u8>, flush: FlushCompress) -> anyhow::Result<()> {
+        loop {
+            out.reserve((input.len() / 2).max(64 * 1024));
+            let before = z.total_in();
+            let status = z.compress_vec(input, out, flush)?;
+            input = &input[(z.total_in() - before) as usize..];
+            let done = match flush {
+                FlushCompress::Finish => status == flate2::Status::StreamEnd,
+                // Everything's in and the output wasn't cut short.
+                _ => input.is_empty() && out.len() < out.capacity(),
+            };
+            if done {
+                return Ok(());
+            }
+        }
+    }
+
+    // The delimited messages: BackupInfo, then each frame and its kind.
+    #[derive(PartialEq, Clone, Copy)]
+    enum Kind {
+        Info,
+        ChatItem,
+        AccountOrRecipient,
+        Other,
+    }
+    let mut pieces: Vec<(&[u8], Kind)> = Vec::new();
+    let mut at = 0;
+    while at < plain.len() {
+        let (mut len, mut shift, start) = (0usize, 0, at);
+        loop {
+            let byte = *plain.get(at).context("a cut length")?;
+            at += 1;
+            len |= usize::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        let body = plain.get(at..at + len).context("a cut frame")?;
+        let kind = if start == 0 {
+            Kind::Info
+        } else {
+            use proto::frame::Item;
+            match proto::Frame::parse_from_bytes(body)?.item {
+                Some(Item::ChatItem(_)) => Kind::ChatItem,
+                Some(Item::Account(_) | Item::Recipient(_)) => Kind::AccountOrRecipient,
+                _ => Kind::Other,
+            }
+        };
+        pieces.push((&plain[start..at + len], kind));
+        at += len;
+    }
+
+    let mut z = Compress::new(Compression::default(), false);
+    let mut crc = flate2::Crc::new();
+    // gzip's header: deflate, no name, no time, unknown OS.
+    let mut out = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+    let mut pending: Vec<u8> = Vec::new();
+    let mut flush = |pending: &mut Vec<u8>, out: &mut Vec<u8>, z: &mut Compress| -> anyhow::Result<()> {
+        crc.update(pending);
+        deflate(z, pending, out, FlushCompress::Full)?;
+        pending.clear();
+        Ok(())
+    };
+    let (mut largest, mut current, mut chat_bytes) = (0u64, 0u64, 0u64);
+    let mut next_flush = flush_interval(0, None);
+    for &(bytes, kind) in &pieces {
+        if kind == Kind::Info {
+            pending.extend_from_slice(bytes);
+            flush(&mut pending, &mut out, &mut z)?;
+            continue;
+        }
+        let chat = kind == Kind::ChatItem;
+        let mut around = kind == Kind::AccountOrRecipient;
+        if chat_bytes == 0 && chat {
+            flush(&mut pending, &mut out, &mut z)?;
+        } else if chat_bytes != 0 && !chat {
+            around = true;
+            largest = largest.max(current);
+            current = 0;
+        }
+        if around {
+            flush(&mut pending, &mut out, &mut z)?;
+        }
+        if !chat {
+            pending.extend_from_slice(bytes);
+        } else {
+            let mut frame = bytes;
+            while !frame.is_empty() {
+                let cut = ((next_flush - chat_bytes) as usize).min(frame.len());
+                pending.extend_from_slice(&frame[..cut]);
+                chat_bytes += cut as u64;
+                current += cut as u64;
+                if cut == frame.len() {
+                    break;
+                }
+                frame = &frame[cut..];
+                next_flush += flush_interval(next_flush, None);
+                largest = largest.max(current);
+                current = 0;
+                flush(&mut pending, &mut out, &mut z)?;
+            }
+        }
+        if around {
+            flush(&mut pending, &mut out, &mut z)?;
+        }
+    }
+    crc.update(&pending);
+    deflate(&mut z, &pending, &mut out, FlushCompress::Finish)?;
+    out.extend_from_slice(&crc.sum().to_le_bytes());
+    out.extend_from_slice(&crc.amount().to_le_bytes());
+    let padding = padding_size(largest, out.len() as u64, &mut rand::rng());
+    out.resize(out.len() + padding as usize, 0);
+    Ok(out)
 }
 
 /// A file encrypted for `files/` (Desktop's local attachment format, the
