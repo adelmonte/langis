@@ -1699,7 +1699,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3896,8 +3896,8 @@ dependencies = [
 
 [[package]]
 name = "mrp"
-version = "2.74.0"
-source = "git+https://github.com/signalapp/ringrtc?tag=v2.74.0#bdbb0dd1b9f418850dfe1fa3cd4b1c2b1123436f"
+version = "2.75.0"
+source = "git+https://github.com/signalapp/ringrtc?tag=v2.75.0#1c386d798525564b273bc300d84088de567b8b3f"
 dependencies = [
  "anyhow",
  "log",
@@ -4803,8 +4803,8 @@ dependencies = [
 
 [[package]]
 name = "protobuf"
-version = "2.74.0"
-source = "git+https://github.com/signalapp/ringrtc?tag=v2.74.0#bdbb0dd1b9f418850dfe1fa3cd4b1c2b1123436f"
+version = "2.75.0"
+source = "git+https://github.com/signalapp/ringrtc?tag=v2.75.0#1c386d798525564b273bc300d84088de567b8b3f"
 dependencies = [
  "prost-build",
  "tonic-prost-build",
@@ -5079,7 +5079,7 @@ dependencies = [
 [[package]]
 name = "regex-aot"
 version = "0.1.0"
-source = "git+https://github.com/signalapp/ringrtc?tag=v2.74.0#bdbb0dd1b9f418850dfe1fa3cd4b1c2b1123436f"
+source = "git+https://github.com/signalapp/ringrtc?tag=v2.75.0#1c386d798525564b273bc300d84088de567b8b3f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5207,8 +5207,8 @@ dependencies = [
 
 [[package]]
 name = "ringrtc"
-version = "2.74.0"
-source = "git+https://github.com/signalapp/ringrtc?tag=v2.74.0#bdbb0dd1b9f418850dfe1fa3cd4b1c2b1123436f"
+version = "2.75.0"
+source = "git+https://github.com/signalapp/ringrtc?tag=v2.75.0#1c386d798525564b273bc300d84088de567b8b3f"
 dependencies = [
  "aes 0.9.4",
  "aes-gcm-siv 0.11.1",
@@ -5229,7 +5229,7 @@ dependencies = [
  "mrp",
  "num_enum",
  "prost",
- "protobuf 2.74.0",
+ "protobuf 2.75.0",
  "rand 0.10.3",
  "regex-aot",
  "regex-automata",
@@ -5280,7 +5280,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5293,7 +5293,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5349,7 +5349,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6232,7 +6232,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7130,7 +7130,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
