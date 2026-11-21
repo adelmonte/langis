@@ -1543,6 +1543,9 @@ impl Actor {
                     return;
                 }
                 drop(checks);
+                if sender != self_aci && matches!(content.body, ContentBody::DataMessage(_)) {
+                    self.note_registration(std::slice::from_ref(&sender), &[]).await;
+                }
                 let ctx = MapContext { self_aci: &self_aci, now: now_millis() };
                 for mut action in mapping::map_content(&content, &ctx) {
                     // Theirs keep the server's GUID, for a spam report.
@@ -2963,6 +2966,14 @@ impl Actor {
                 names.push((service_id, name.clone()));
             }
         }
+        // Their `unregisteredAtTimestamp` (Desktop's `mergeContactRecord`).
+        // A record without one doesn't clear ours: we don't write the field
+        // back, so it may only be behind; their next message clears it.
+        let unregistered: Vec<(String, i64)> = contacts
+            .iter()
+            .filter_map(|c| Some((Aci::from(c.aci).service_id_string(), c.unregistered_at?)))
+            .collect();
+        self.note_registration(&[], &unregistered).await;
         let usernames: Vec<(String, String)> = contacts
             .iter()
             .filter_map(|c| Some((Aci::from(c.aci).service_id_string(), c.username.clone()?)))
@@ -5402,7 +5413,22 @@ impl Actor {
         for (who, error) in &delivery.failed {
             warn!(recipient = %who, %error, "send failed");
         }
+        let now = now_millis();
+        let unregistered: Vec<_> = delivery.unregistered.iter().map(|sid| (sid.clone(), now)).collect();
+        self.note_registration(&delivery.reached, &unregistered).await;
         delivery
+    }
+
+    /// Keeps who a send found no longer registered (a 404, Desktop's
+    /// `handleMessageSend` `setUnregistered`) and clears it for whoever it
+    /// reached or messaged us (`setRegistered` in `ts/messages/send` and
+    /// `handleDataMessage`).
+    pub(crate) async fn note_registration(&self, registered: &[String], unregistered: &[(String, i64)]) {
+        match self.db.set_registration(registered, unregistered).await {
+            Ok(true) => self.emit(Event::ConversationsChanged),
+            Ok(false) => {}
+            Err(error) => warn!(%error, "failed to save who is registered"),
+        }
     }
 
     /// A body over 2 KiB goes as Desktop sends it (`sendNormalMessage`,

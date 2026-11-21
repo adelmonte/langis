@@ -181,6 +181,14 @@ here at once and on other devices through Storage Service. A
 `Conversation` carries them back, with `blocked_at` (when it was blocked)
 and a person's profile `about`.
 
+**No longer on Signal.** A send that finds someone unregistered (the
+server's 404) sets their chat's `unregistered_at`, as Desktop's
+`discoveredUnregisteredAt`; a send that reaches them, or a message from
+them, clears it. `Conversation::ever_unregistered()` is Desktop's test for
+replacing the composer with "This person isn't using Signal" and hiding the
+call buttons; `unregistered(now)` (found in the last six hours) is its test
+for leaving them out of the people offered for a new chat or group.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified

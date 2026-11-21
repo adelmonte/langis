@@ -63,6 +63,9 @@ pub(crate) struct StorageContact {
     pub system_name: bool,
     /// Their username (Desktop's `contactRecord.username`).
     pub username: Option<String>,
+    /// When they were found unregistered (`unregisteredAtTimestamp`),
+    /// Unix millis.
+    pub unregistered_at: Option<i64>,
 }
 
 /// What we read from the Storage Service.
@@ -1727,6 +1730,7 @@ pub(crate) fn from_record(record: &ContactRecord) -> Option<StorageContact> {
             .any(|n| !n.trim().is_empty()),
         nickname,
         username: Some(record.username.trim().to_owned()).filter(|u| !u.is_empty()),
+        unregistered_at: (record.unregistered_at_timestamp != 0).then(|| clamp_millis(record.unregistered_at_timestamp)),
     })
 }
 

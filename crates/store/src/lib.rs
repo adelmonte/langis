@@ -162,6 +162,9 @@ pub struct Conversation {
     /// A person's profile About, its emoji first (Desktop's `about` and
     /// `aboutEmoji`), when their profile has one.
     pub about: Option<String>,
+    /// Unix millis a send last found them no longer registered (Desktop's
+    /// `discoveredUnregisteredAt`); `None` once they're seen again.
+    pub unregistered_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -901,6 +904,21 @@ impl Conversation {
             _ => self.added_by.as_deref(),
         }
     }
+
+    /// Ever found unregistered and not seen since (Desktop's
+    /// `isConversationEverUnregistered`): the composer gives way to "This
+    /// person isn't using Signal" and the call buttons go.
+    pub fn ever_unregistered(&self) -> bool {
+        self.kind == ConversationKind::Direct && self.unregistered_at.is_some()
+    }
+
+    /// Found unregistered in the last six hours (Desktop's
+    /// `isConversationUnregistered`): left out of the people offered for a
+    /// new chat or group.
+    pub fn unregistered(&self, now_millis: i64) -> bool {
+        const SIX_HOURS: i64 = 6 * 3600 * 1000;
+        self.ever_unregistered() && self.unregistered_at.is_some_and(|at| now_millis - at < SIX_HOURS)
+    }
 }
 
 impl Message {
@@ -1194,7 +1212,7 @@ const CONVERSATION_COLUMNS: &str = "id, kind, title, phone, color, members, last
       WHERE m.conversation_id = conversations.id AND m.unread_poll_votes = 1) AS unread_poll_votes, \
      message_request, reported, added_by, \
      EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = substr(conversations.id, 3)) AS system_contact, \
-     dont_notify_mentions, blocked_at, \
+     dont_notify_mentions, blocked_at, unregistered_at, \
      (SELECT TRIM(p.about_emoji || ' ' || p.about) FROM profiles p \
       WHERE p.service_id = substr(conversations.id, 3) AND conversations.kind = 'direct') AS about, \
      (kind = 'note_to_self' OR id = 'd:11111111-1111-4111-8111-111111111111' OR message_request = 1 \
@@ -1425,6 +1443,7 @@ fn conversation_from_row(row: &SqliteRow) -> Result<Conversation> {
         system_contact: row.try_get("system_contact")?,
         dont_notify_mentions: row.try_get("dont_notify_mentions")?,
         blocked_at: row.try_get("blocked_at")?,
+        unregistered_at: row.try_get("unregistered_at")?,
         about: row.try_get::<Option<String>, _>("about")?.filter(|a| !a.is_empty()),
     })
 }
@@ -2012,6 +2031,53 @@ impl AppDb {
             .execute(&self.writer)
             .await?;
         Ok(())
+    }
+
+    /// Records that these people were found no longer registered, each at
+    /// its time (Desktop's `setUnregistered`, keeping the latest), and that
+    /// `registered` were reached or heard from (`setRegistered`). Only
+    /// people with a chat are kept. True when anything changed.
+    pub async fn set_registration(&self, registered: &[String], unregistered: &[(String, i64)]) -> Result<bool> {
+        // Most sends and messages are from people who were never found
+        // unregistered: look first, on the read pool, rather than queue a
+        // write for each.
+        let mut found = Vec::new();
+        for sid in registered {
+            let flagged: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM conversations WHERE id = 'd:' || ? AND unregistered_at IS NOT NULL)",
+            )
+            .bind(sid)
+            .fetch_one(&self.pool)
+            .await?;
+            if flagged {
+                found.push(sid);
+            }
+        }
+        if found.is_empty() && unregistered.is_empty() {
+            return Ok(false);
+        }
+        let mut tx = self.write().await?;
+        let mut changed = 0;
+        for sid in found {
+            changed += sqlx::query("UPDATE conversations SET unregistered_at = NULL WHERE id = 'd:' || ? AND unregistered_at IS NOT NULL")
+                .bind(sid)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        }
+        for (sid, at) in unregistered {
+            changed += sqlx::query(
+                "UPDATE conversations SET unregistered_at = ?1 WHERE id = 'd:' || ?2 AND kind = 'direct' \
+                 AND (unregistered_at IS NULL OR unregistered_at < ?1)",
+            )
+            .bind(at)
+            .bind(sid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        }
+        tx.commit().await?;
+        Ok(changed > 0)
     }
 
     /// A chat's "Mentions" while muted: `true` is Don't notify.
