@@ -303,7 +303,11 @@ through. It turns on by a weekly schedule (`schedule_start` and
 `schedule_end` as hhmm, `schedule_days` Monday first; an end at or before
 the start runs into the next day) or by hand. Read them with
 `AppDb::notification_profiles()` (newest first, deleted ones with
-`deleted_at` set; `langis_store::current_profiles` drops those) and ask
+`deleted_at` set; `langis_store::current_profiles` drops those; the core
+removes a deleted one for good once the message queue time, 30 days or
+the remote config's longer `global.messageQueueTimeInSeconds`, has passed,
+checked after each Storage Service read, as Desktop's
+`notificationProfilesService` does) and ask
 which is on with `AppDb::notification_profile_state(now)`: the profile on,
 and `next_change`, when to ask again. `AppDb::notification_silenced(chat,
 is_call, mention_or_reply, now)` (or `langis_store::should_notify` with the

@@ -41,10 +41,24 @@ impl Actor {
         self.storage_written();
     }
 
-    /// Storage Service's profiles and override merged.
+    /// Storage Service's profiles and override merged, and then profiles
+    /// deleted longer ago than the message queue time removed.
     pub(super) async fn apply_storage_notification_profiles(self: &Rc<Self>, remote: RemoteProfiles) {
         let now = now_millis().max(0) as u64;
-        let mut edits: Vec<NotificationProfileEdit> = remote.profiles.into_iter().map(NotificationProfileEdit::Merge).collect();
+        let expired_before = now.saturating_sub(crate::remote_config().message_queue_time_ms().max(0) as u64);
+        let local: HashSet<String> = match self.db.notification_profiles().await {
+            Ok(profiles) => profiles.into_iter().map(|p| p.id).collect(),
+            Err(error) => return self.error("failed to read notification profiles", error),
+        };
+        // A record deleted before the window isn't taken in, unless it
+        // deletes a profile here (Desktop's `mergeNotificationProfileRecord`
+        // marks it to drop; the cleanup below then removes ours).
+        let mut edits: Vec<NotificationProfileEdit> = remote
+            .profiles
+            .into_iter()
+            .filter(|p| p.deleted_at == 0 || p.deleted_at > expired_before || local.contains(&p.id))
+            .map(NotificationProfileEdit::Merge)
+            .collect();
         if let Some(override_) = remote.override_ {
             edits.push(NotificationProfileEdit::MergeOverride { override_, at: now });
         }
@@ -55,8 +69,27 @@ impl Actor {
                 Err(error) => return self.error("failed to save notification profiles", error),
             }
         }
+        changed |= self.remove_expired_notification_profiles(expired_before).await;
         if changed {
             self.emit(Event::NotificationProfilesChanged);
+        }
+    }
+
+    /// Desktop's `notificationProfilesService` update: a deleted profile
+    /// goes for good once the message queue time (`getMessageQueueTime`)
+    /// has passed since its deletion. Runs after each Storage Service read,
+    /// which comes after the remote config with that time.
+    async fn remove_expired_notification_profiles(&self, expired_before: u64) -> bool {
+        match self.db.remove_notification_profiles_deleted_before(expired_before).await {
+            Ok(removed) if !removed.is_empty() => {
+                info!(count = removed.len(), "removed notification profiles deleted before the retention window");
+                true
+            }
+            Ok(_) => false,
+            Err(error) => {
+                warn!(%error, "failed to remove old deleted notification profiles");
+                false
+            }
         }
     }
 }
