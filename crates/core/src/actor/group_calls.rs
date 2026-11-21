@@ -484,7 +484,7 @@ impl Actor {
                 let max_devices = peek.as_ref().and_then(|p| p.max_devices);
                 self.emit(Event::GroupPeek { conversation, users, max_devices });
             }
-            GroupEvent::Ended { client_id, reason } => {
+            GroupEvent::Ended { client_id, reason, summary } => {
                 let ended = {
                     let mut call = self.group_call.borrow_mut();
                     if call.as_ref().is_some_and(|g| g.client_id == Some(client_id)) { call.take() } else { None }
@@ -504,6 +504,8 @@ impl Actor {
                     });
                     self.emit_call();
                     self.left_group_call(&call).await;
+                    let call_type = if call.link.is_some() { "call_link" } else { "group" };
+                    self.maybe_call_survey(call.conversation.clone(), call_type, &summary).await;
                 }
             }
             GroupEvent::Ring { group_id, ring_id, sender, ring } => self.on_group_ring(group_id, ring_id, sender, ring).await,

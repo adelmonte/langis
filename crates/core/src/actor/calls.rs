@@ -595,8 +595,8 @@ impl Actor {
                 self.with_calls(|calls| calls.send_sender_status());
                 self.emit_call();
             }
-            State::Ended(reason) => self.end_call(&peer, call_id, Some(reason)).await,
-            State::Rejected | State::Concluded => self.end_call(&peer, call_id, None).await,
+            State::Ended(reason, summary) => self.end_call(&peer, call_id, Some(reason), Some(summary)).await,
+            State::Rejected | State::Concluded => self.end_call(&peer, call_id, None, None).await,
         }
     }
 
@@ -613,7 +613,7 @@ impl Actor {
     }
 
     /// The call is over: note it in the chat, and clear it.
-    async fn end_call(self: &Rc<Self>, peer: &str, call_id: CallId, reason: Option<EndReason>) {
+    async fn end_call(self: &Rc<Self>, peer: &str, call_id: CallId, reason: Option<EndReason>, summary: Option<langis_calls::Summary>) {
         let ended = {
             let mut call = self.call.borrow_mut();
             match call.as_ref() {
@@ -646,6 +646,40 @@ impl Actor {
         }
         self.emit(Event::ConversationsChanged);
         self.emit_call();
+        if let Some(summary) = summary {
+            let call_type = if call.video { "direct_video" } else { "direct_voice" };
+            self.maybe_call_survey(call.conversation.clone(), call_type, &summary).await;
+        }
+    }
+
+    /// Desktop's call quality survey, offered after a call as
+    /// `crate::call_survey` decides, noting when.
+    pub(super) async fn maybe_call_survey(&self, conversation: ConversationId, call_type: &'static str, summary: &langis_calls::Summary) {
+        use crate::call_survey as cs;
+        let mut times = [None, None];
+        for (time, key) in times.iter_mut().zip([cs::SETTING_LAST_SURVEY, cs::SETTING_LAST_FAILURE_SURVEY]) {
+            *time = self.db.setting(key).await.ok().flatten().and_then(|v| v.parse::<i64>().ok());
+        }
+        let [last, last_failure] = times;
+        let me = ConversationId::direct(&self.self_aci());
+        let phone = self.db.conversation(&me).await.ok().flatten().and_then(|c| c.phone);
+        let ppm = cs::ppm(crate::remote_config().value(cs::REMOTE_PPM), phone.as_deref());
+        let now = now_millis();
+        if !cs::should_show(summary, last, last_failure, now, ppm, rand::random::<f64>()) {
+            return;
+        }
+        let _ = self.db.set_setting(cs::SETTING_LAST_SURVEY, &now.to_string()).await;
+        if summary.failed() {
+            let _ = self.db.set_setting(cs::SETTING_LAST_FAILURE_SURVEY, &now.to_string()).await;
+        }
+        self.emit(Event::CallQualitySurvey(cs::CallSurvey {
+            conversation,
+            call_type,
+            started_at: summary.started_at,
+            ended_at: summary.ended_at,
+            failed: summary.failed(),
+            end_reason: summary.end_reason.clone(),
+        }));
     }
 
     /// A call we didn't ring for: missed, in the chat and the call history.

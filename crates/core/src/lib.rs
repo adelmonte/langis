@@ -38,6 +38,7 @@ pub mod deletes;
 pub mod edits;
 pub mod long_text;
 pub mod release_notes;
+pub mod call_survey;
 pub mod megaphones;
 pub mod remote_config;
 pub mod video;
@@ -1434,6 +1435,10 @@ pub enum Event {
     /// there while muted. Show it as a notification and answer
     /// `Command::UnreadReminderShown`; until then it comes again hourly.
     UnreadReminder { conversation: ConversationId, reminder: langis_store::ReminderData },
+    /// Ask "How was your call?" about a call that just ended (Desktop's
+    /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
+    /// Signal's gRPC call quality service, which langis can't reach.
+    CallQualitySurvey(call_survey::CallSurvey),
     Error(String),
     Unlinked,
 }

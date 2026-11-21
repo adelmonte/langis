@@ -206,6 +206,18 @@ there while muted. Show it as a notification (Desktop's wording is in
 { conversation }`; until you do, it comes again each hour. Notification
 profiles aren't checked.
 
+**Call quality survey.** After a call ends, `Event::CallQualitySurvey`
+(`call_survey::CallSurvey`: the chat, Desktop's call type, when it
+connected and ended, whether it failed) asks for Desktop's "How was your
+call?" dialog, as Desktop decides (`ts/util/callQualitySurvey.dom.ts`):
+only for calls RingRTC marks a survey candidate (it connected), at most
+daily, always for a failed call unless one was asked about within a day,
+else for the share of calls in the remote config's
+`desktop.callQualitySurveyPPM` for our number's country (1% without it).
+There's no command to submit it: Desktop sends the answers to Signal's
+gRPC `CallQuality` service over libsignal-net's chat connection, which
+langis doesn't have, so the answers stay with the frontend.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified
