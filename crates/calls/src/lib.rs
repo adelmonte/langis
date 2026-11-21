@@ -110,6 +110,50 @@ pub struct Summary {
     /// never connected.
     pub started_at: i64,
     pub ended_at: i64,
+    /// RingRTC's medians and losses (`QualityStats`), sent with a survey.
+    pub stats: CallStats,
+    /// RingRTC's machine-readable statistics (`raw_stats`), a survey's
+    /// `call_telemetry`.
+    pub telemetry: Option<Vec<u8>>,
+    /// A hash of the call's id shared by its participants (`call_id_hash`).
+    pub call_id_hash: Option<Vec<u8>>,
+}
+
+/// One kind of media's statistics (RingRTC's `MediaQualityStats`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MediaStats {
+    /// Round-trip time of RTP/RTCP packets, milliseconds.
+    pub rtt_median: Option<f32>,
+    /// Jitter measured at the other end, and here, milliseconds.
+    pub jitter_median_send: Option<f32>,
+    pub jitter_median_recv: Option<f32>,
+    /// Packets lost, as fractions.
+    pub packet_loss_send: Option<f32>,
+    pub packet_loss_recv: Option<f32>,
+}
+
+/// A call's statistics (RingRTC's `QualityStats`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CallStats {
+    /// Round-trip time of STUN/ICE packets, milliseconds.
+    pub connection_rtt_median: Option<f32>,
+    pub audio: MediaStats,
+    pub video: MediaStats,
+}
+
+// Compared bit for bit as plain data; a NaN never comes from RingRTC.
+impl Eq for CallStats {}
+
+impl From<&ringrtc::core::call_summary::MediaQualityStats> for MediaStats {
+    fn from(stats: &ringrtc::core::call_summary::MediaQualityStats) -> Self {
+        Self {
+            rtt_median: stats.rtt_median,
+            jitter_median_send: stats.jitter_median_send,
+            jitter_median_recv: stats.jitter_median_recv,
+            packet_loss_send: stats.packet_loss_fraction_send,
+            packet_loss_recv: stats.packet_loss_fraction_recv,
+        }
+    }
 }
 
 impl Summary {
@@ -128,6 +172,13 @@ impl From<&ringrtc::core::call_summary::CallSummary> for Summary {
             end_reason: summary.call_end_reason_text.clone(),
             started_at: u64::from(summary.start_time) as i64,
             ended_at: u64::from(summary.end_time) as i64,
+            stats: CallStats {
+                connection_rtt_median: summary.quality_stats.rtt_median_connection,
+                audio: MediaStats::from(&summary.quality_stats.audio_stats),
+                video: MediaStats::from(&summary.quality_stats.video_stats),
+            },
+            telemetry: summary.raw_stats.clone(),
+            call_id_hash: summary.call_id_hash.clone(),
         }
     }
 }

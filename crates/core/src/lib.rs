@@ -480,6 +480,21 @@ pub enum Command {
     /// `Event::StickerPackHidden`. Offered only while
     /// `RemoteConfig::sticker_pack_hiding` is on.
     SetStickerPackHidden { id: Vec<u8>, key: Vec<u8>, hidden: bool },
+    /// The answers to `Event::CallQualitySurvey`, sent to Signal with the
+    /// call's statistics (Desktop's `submitCallQualitySurvey`): whether it
+    /// went well, the issues as Desktop's `CallQualitySurvey.Issue` values
+    /// (`audio`, `audio_stuttering`, `audio_local_echo`,
+    /// `audio_remote_echo`, `audio_drop`, `video`, `video_no_camera`,
+    /// `video_low_quality`, `video_low_resolution`, `call_dropped`,
+    /// `other`), the description that goes with `other`, and an uploaded
+    /// debug log's URL. Answered with `Event::CallQualitySurveySent`.
+    SubmitCallQualitySurvey {
+        survey: call_survey::CallSurvey,
+        satisfied: bool,
+        issues: Vec<String>,
+        description: Option<String>,
+        debug_log_url: Option<String>,
+    },
     /// Favorites a sticker, or unfavorites it, here and on our other
     /// devices (its `FavoriteStickerRecord`; Desktop's
     /// `markStickerAsFavorite`). The pack needn't be installed.
@@ -1490,9 +1505,13 @@ pub enum Event {
     /// `Command::UnreadReminderShown`; until then it comes again hourly.
     UnreadReminder { conversation: ConversationId, reminder: langis_store::ReminderData },
     /// Ask "How was your call?" about a call that just ended (Desktop's
-    /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
-    /// Signal's gRPC call quality service, which langis can't reach.
+    /// `shouldShowCallQualitySurvey`); the answers go back with
+    /// `Command::SubmitCallQualitySurvey`.
     CallQualitySurvey(call_survey::CallSurvey),
+    /// `Command::SubmitCallQualitySurvey` went (Desktop's "Thanks for your
+    /// feedback!") or failed (`Err`: why; Desktop's "Failed to submit
+    /// survey").
+    CallQualitySurveySent(Result<(), String>),
     Error(String),
     Unlinked,
 }

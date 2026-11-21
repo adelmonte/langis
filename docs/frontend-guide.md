@@ -266,15 +266,19 @@ profiles aren't checked.
 
 **Call quality survey.** After a call ends, `Event::CallQualitySurvey`
 (`call_survey::CallSurvey`: the chat, Desktop's call type, when it
-connected and ended, whether it failed) asks for Desktop's "How was your
+connected and ended, whether it failed, and RingRTC's statistics) asks for Desktop's "How was your
 call?" dialog, as Desktop decides (`ts/util/callQualitySurvey.dom.ts`):
 only for calls RingRTC marks a survey candidate (it connected), at most
 daily, always for a failed call unless one was asked about within a day,
 else for the share of calls in the remote config's
 `desktop.callQualitySurveyPPM` for our number's country (1% without it).
-There's no command to submit it: Desktop sends the answers to Signal's
-gRPC `CallQuality` service over libsignal-net's chat connection, which
-langis doesn't have, so the answers stay with the frontend.
+Send the answers back with `Command::SubmitCallQualitySurvey` (the
+survey from the event, whether it went well, Desktop's issue values, the
+description for `other`, and optionally an uploaded debug log's URL);
+`Event::CallQualitySurveySent` says whether it went. They go as
+`PUT /v1/call_quality_survey` on the unauthenticated connection, the REST
+route Desktop used before moving to libsignal-net's gRPC service (Desktop
+commit 97a1b1ef6); not tested against the live server.
 
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in

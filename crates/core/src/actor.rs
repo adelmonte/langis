@@ -1042,6 +1042,9 @@ impl Actor {
                 Command::InstallStickerPack { id, key } => self.install_sticker_pack_ui(id, key).await,
                 Command::UninstallStickerPack { id, key } => self.uninstall_sticker_pack_ui(id, key).await,
                 Command::SetStickerPackHidden { id, key, hidden } => self.set_sticker_pack_hidden(id, key, hidden).await,
+                Command::SubmitCallQualitySurvey { survey, satisfied, issues, description, debug_log_url } => {
+                    self.submit_call_survey(survey, satisfied, issues, description, debug_log_url).await
+                }
                 Command::OrderStickerPacks(ids) => self.order_sticker_packs(ids).await,
                 Command::SetStickerFavorite { pack_id, pack_key, sticker_id, favorite } => {
                     self.set_sticker_favorite(pack_id, pack_key, sticker_id, favorite).await

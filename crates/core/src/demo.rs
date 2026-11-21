@@ -1914,6 +1914,8 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 emit(Event::Stickers(demo_stickers_installed(&db, &data_dir).await));
                 emit(Event::StickerManager(demo_sticker_manager(&db, &data_dir).await));
             }
+            // Nothing leaves the demo.
+            Command::SubmitCallQualitySurvey { .. } => emit(Event::CallQualitySurveySent(Ok(()))),
             // Hidden here only, as the store keeps it.
             Command::SetStickerPackHidden { id, key, hidden } => {
                 let hex = hex::encode(&id);
