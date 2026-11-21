@@ -19,10 +19,11 @@ use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
 
 /// The Signal Desktop release this client's behavior follows, for version
-/// flags. Its code is compared with Desktop 8.34 (`v8.34.0-alpha.1`), and
-/// it's a production build: only `.prod` flags apply (Desktop's
-/// `isProduction`), never `.beta`.
-pub const DESKTOP_VERSION: &str = "8.34.0";
+/// flags. Its code is compared with Desktop 8.39 (`v8.39.0-alpha.1`, the
+/// commit in `.signal-desktop-hash`), and it's a production build: only
+/// `.prod` flags apply (Desktop's `isProduction`), never `.beta`. Release
+/// notes don't read it: they follow the live Desktop version.
+pub const DESKTOP_VERSION: &str = "8.39.0";
 
 /// Settings key: the last config fetched (JSON object of key to value).
 pub(crate) const SETTING_CONFIG: &str = "remote_config";
@@ -427,7 +428,7 @@ mod tests {
         let flag = |v: &str| RemoteConfig::from_pairs([("desktop.pollSend1to1.prod", v)]);
         assert!(flag("8.0.0").poll_send_1to1());
         assert!(flag(DESKTOP_VERSION).poll_send_1to1());
-        assert!(!flag("8.34.1").poll_send_1to1());
+        assert!(!flag("8.39.1").poll_send_1to1());
         assert!(!flag("99.0.0").poll_send_1to1());
         // Not a version, or only the beta key: off, as Desktop.
         assert!(!flag("true").poll_send_1to1());
