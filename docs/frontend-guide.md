@@ -342,6 +342,29 @@ few times a second, and `Command::CancelDownload` stops it (it ends with
 `Event::AttachmentUnavailable { message_id, index, permanent }` says one
 couldn't come: gone for good (Desktop's "This media is not available"), or
 worth another `FetchAttachment`.
+**Backup media download.** When the account has paid media backups (the
+phone's Signal Secure Backups with all media), a transferred backup's
+photos, videos and files that the auto-download choices take are queued to
+download from the backup tier, as Desktop's "Syncing media" does
+(`ts/util/backupMediaDownload.preload.ts`). `Event::BackupMediaDownload`
+(`backups::BackupMediaDownload`) says how far it is: `total_bytes` and
+`completed_bytes` (each file counts its expected encrypted size; one that
+failed for good counts as done), `paused`, `idle` (files are waiting for a
+later try: offline, or the backup tier failing; Desktop's "Media will
+continue to download in the background"), `dismissed` and `media_backups`.
+It comes at a start once connected, a few times a second while files
+come, and after each command; `Command::LoadBackupMediaDownload` asks for
+it. `show_banner()` is Desktop's test for the left pane's banner and
+`complete()` for its "Restore complete". `Command::BackupMediaDownload(action)`
+takes Desktop's buttons: `Pause` and `Resume` (kept across restarts),
+`Cancel` (after Desktop's "Cancel media syncing?" dialog: the queue and
+counts go; the files stay downloadable one by one) and `Dismiss` (the
+banner's close button). One file downloads at a time, newest first; a
+file that fails is tried again on later runs (each time the message queue
+drains, on resume, and five minutes after a run left some), and after three
+tries or one lasting failure gets its backup thumbnail instead. Each file
+still gives `MessageChanged` when it's in.
+
 A story's photo or video comes with `Command::FetchStory { id }` (then
 `StoriesChanged`); `Event::StoryDownloadFailed { id }` means it couldn't, and
 another `FetchStory` tries again.
@@ -352,6 +375,37 @@ failed" when that's everyone, "Partially sent" otherwise);
 Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
 upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending
 meanwhile. Without ffmpeg the original goes.
+
+## Backups
+
+Settings > Backups shows Signal Secure Backups as a linked Desktop does
+(`PreferencesBackups.dom.tsx`, `PreferencesBackupDetails.dom.tsx`). Only the
+phone turns backups on or pays for them, so the page only reports.
+`Command::RefreshBackupStatus { details }` when the page opens (`details:
+true` for its details page) answers with `Event::BackupStatus` at once from
+what's stored, with `fetching` set when a fetch started, and again once the
+server answered. Each fetch runs at most every 30 seconds.
+
+`backups::BackupStatus` has:
+
+| Field | Desktop shows |
+|---|---|
+| `tier: None` | Backups off or not set up: "Signal Secure Backups", "Automatic backups with Signal's secure, end-to-end encrypted storage service. Get started on your phone." |
+| `tier: Some(Free)` with `free_media_days` | "Text + {n} days media backup", "Your backup plan is free" |
+| `tier: Some(Paid)` with `subscription` | "Text + all media backup" and the subscription: `Active { cost, renews_at }` ("{cost} / month", "Renews {date}"), `PendingCancellation { cost, expires_at }` ("Subscription canceled", "Expires {date}"), `NotFound` or `Expired` ("Your subscription was not found."). `None` before the first fetch reads as not found. |
+| `last_backup` (`created_at`, `size`) | "Last backup: Your phone, {date}" on the details page (Desktop fetches the size but doesn't show it) |
+| `show_spinner(now)` | A spinner in place of the subscription while fetching over data older than five minutes |
+
+`Cost::amount` is in whole units of `currency` (1.99 USD). Where it comes
+from: the tier is the account record's `backupTier`; the subscription is
+`GET /v1/subscription/{subscriberId}` with the subscriber id from the
+account record (or the transferred backup); the last backup is the message
+backup file's `Last-Modified` and `Content-Length` on the backup CDN, read
+with a message backup credential made from the phone's account entropy
+pool. With no entropy pool yet the last backup stays unknown. A failed
+subscription fetch reads as not found, as in Desktop; a failed last-backup
+fetch keeps what was there. The demo answers with a $1.99 paid plan and a
+backup from last night.
 
 ## 9. Calls
 

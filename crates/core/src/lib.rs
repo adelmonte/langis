@@ -20,6 +20,7 @@ mod groups;
 pub mod group_admin;
 mod history;
 mod backup_media;
+pub mod backups;
 mod safety;
 mod key_transparency;
 mod calling;
@@ -583,6 +584,18 @@ pub enum Command {
     /// Downloads a message's link preview image, when the photos
     /// auto-download setting left it (Desktop downloads it on a click).
     FetchPreviewImage { message_id: i64 },
+    /// Settings > Backups opened (Desktop's `refreshBackupSubscriptionStatus`,
+    /// and with `details`, its details page's `refreshCloudBackupStatus`
+    /// too): answered with `Event::BackupStatus` at once from what's stored,
+    /// then again once the server answered. Each fetch runs at most every
+    /// 30 seconds.
+    RefreshBackupStatus { details: bool },
+    /// Asks for `Event::BackupMediaDownload` (it also comes by itself as
+    /// the download moves).
+    LoadBackupMediaDownload,
+    /// Pauses, resumes, cancels the backup media download, or closes its
+    /// banner. Answered with `Event::BackupMediaDownload`.
+    BackupMediaDownload(backups::BackupMediaDownloadAction),
     /// Stops attachment `index` of `message_id` downloading (Desktop's
     /// cancel on a download in progress); it's left not downloaded.
     CancelDownload { message_id: i64, index: usize },
@@ -1482,6 +1495,12 @@ pub enum Event {
     /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
     /// Signal's gRPC call quality service, which langis can't reach.
     CallQualitySurvey(call_survey::CallSurvey),
+    /// Settings > Backups (answer to `Command::RefreshBackupStatus`).
+    BackupStatus(backups::BackupStatus),
+    /// How the download of a transferred backup's media is going: at
+    /// start, a few times a second while it moves, and after each
+    /// `Command::BackupMediaDownload`.
+    BackupMediaDownload(backups::BackupMediaDownload),
     Error(String),
     Unlinked,
 }

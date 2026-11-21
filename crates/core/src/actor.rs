@@ -1,6 +1,7 @@
 //! The backend actor: owns the presage manager and applies incoming content to
 //! the app database. Runs on a `LocalSet` because presage's futures are `!Send`.
 
+mod backup_downloads;
 mod call_log;
 mod catch_up;
 mod chat_folders;
@@ -578,6 +579,8 @@ struct Actor {
     poll_votes_resumed: RefCell<bool>,
     /// Reads attachments from the backup (media) tier.
     backup_media: crate::backup_media::BackupMedia,
+    /// Settings > Backups fetches and the backup media download.
+    backup_downloads: backup_downloads::BackupDownloads,
     /// Held across a story list edit's read and write of the saved lists,
     /// so two edits at once don't undo each other.
     story_lists_edit: tokio::sync::Mutex<()>,
@@ -711,6 +714,7 @@ pub(crate) async fn run(
         long_text_retries: RefCell::default(),
         poll_votes_resumed: RefCell::new(false),
         backup_media: Default::default(),
+        backup_downloads: Default::default(),
         story_lists_edit: tokio::sync::Mutex::new(()),
         expiry: tokio::sync::Notify::new(),
         last_sent_at: std::cell::Cell::new(0),
@@ -956,6 +960,8 @@ impl Actor {
                 tokio::task::spawn_local(self.clone().install_sticker_packs(manager.clone(), packs));
             }
             let downloads = std::mem::take(&mut imported.downloads);
+            // Media in the backup tier goes in the backup media download.
+            let downloads = self.queue_backup_media(downloads).await;
             if !downloads.is_empty() {
                 tokio::task::spawn_local(self.clone().download_transferred(manager.clone(), downloads));
             }
@@ -1012,6 +1018,9 @@ impl Actor {
         tokio::task::spawn_local(async move {
             match command {
                 Command::Link => self.link().await,
+                command @ (Command::RefreshBackupStatus { .. } | Command::LoadBackupMediaDownload | Command::BackupMediaDownload(_)) => {
+                    self.backup_command(command).await
+                }
                 Command::ContinueLink { delete_data } => self.continue_link(delete_data).await,
                 Command::SendText { conversation, body, quote, preview, mentions, styles } => {
                     self.send_text(conversation, body, quote, preview, mentions, styles).await
@@ -1529,6 +1538,9 @@ impl Actor {
             Received::QueueEmpty => {
                 self.drain_finished(true);
                 self.emit(Event::Connection(ConnectionState::Online));
+                // Queued backup media goes on (Desktop's download manager
+                // starts with the app and goes on after a reconnect).
+                self.start_backup_downloads();
                 // Desktop's `deliveryReceiptQueue.start()` once caught up.
                 self.receipts_ready.set(true);
                 self.schedule_receipts();
@@ -3013,6 +3025,7 @@ impl Actor {
             profile_sharing,
             story_send_modes,
             backup_tier,
+            backup_subscriber_id,
             identifiers,
             own_profile,
             chat_folders,
@@ -3044,6 +3057,7 @@ impl Actor {
         self.save_account_settings(settings).await;
         if let Some(tier) = backup_tier {
             self.save_backup_tier(tier).await;
+            self.save_backup_subscriber(backup_subscriber_id.as_deref()).await;
         }
         {
             let _edit = self.story_lists_edit.lock().await;
@@ -6444,6 +6458,10 @@ impl Actor {
         }
         info!(%tier, "backup tier changed");
         self.backup_media.reset().await;
+        // The first read of the record isn't a change.
+        if old.is_some() {
+            self.backup_tier_changed().await;
+        }
     }
 
     /// Asks the phone for its keys when the media root key is missing (a

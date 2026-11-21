@@ -103,6 +103,9 @@ pub(crate) struct StorageSnapshot {
     /// The account's `backupTier` (a zkgroup `BackupLevel`), `Some(0)` when
     /// backups are off; `None` without an account record.
     pub backup_tier: Option<u64>,
+    /// The account's `backupSubscriberData.subscriberId` (empty: none),
+    /// read with `backup_tier`.
+    pub backup_subscriber_id: Option<Vec<u8>>,
     /// What key transparency needs from the account record.
     pub identifiers: Option<AccountIdentifiers>,
     /// Our profile as the account record has it.
@@ -312,6 +315,9 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                     // Desktop's `saveBackupTier(toNumber(backupTier))`:
                     // unset means backups are off.
                     snapshot.backup_tier = Some(account.backup_tier.unwrap_or(0));
+                    // Desktop's `saveBackupsSubscriberData`.
+                    snapshot.backup_subscriber_id =
+                        Some(account.backup_subscriber_data.as_ref().map(|d| d.subscriber_id.clone()).unwrap_or_default());
                     snapshot.notification_profiles.override_ =
                         Some(notification_profiles::manual_override(account.notification_profile_manual_override.as_ref()));
                     snapshot.story_view_receipts = match account.story_view_receipts_enabled() {
