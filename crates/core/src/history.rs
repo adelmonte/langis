@@ -739,6 +739,30 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
     Ok(imported)
 }
 
+/// A quote's private reply group (Desktop's import of
+/// `Quote.privateReplyDescriptor`, commit 98032f987): the group recipient
+/// in `privateReplyGroupRecipientId` (7) when it's a group in the backup,
+/// otherwise unknown when the quote has either field. This libsignal's
+/// `backup.proto` predates the fields, so they're read from the quote's
+/// unknown fields.
+fn private_reply_group(quote: &proto::Quote, people: &HashMap<u64, Who>) -> (Option<ConversationId>, bool) {
+    use protobuf::UnknownValueRef;
+    let (mut unknown, mut recipient) = (false, None);
+    for (number, value) in quote.special_fields.unknown_fields().iter() {
+        match (number, value) {
+            (6, UnknownValueRef::Varint(v)) => unknown |= v != 0,
+            (7, UnknownValueRef::Varint(v)) => recipient = Some(v),
+            _ => {}
+        }
+    }
+    let group = recipient.and_then(|id| match people.get(&id) {
+        Some(Who::Group { key, .. }) => Some(ConversationId::group(key)),
+        _ => None,
+    });
+    let unknown = group.is_none() && (unknown || recipient.is_some());
+    (group, unknown)
+}
+
 /// A sticker pack's id and key as hex, when they're the right lengths
 /// (Desktop's `STICKERPACK_ID_BYTE_LEN` and `STICKERPACK_KEY_BYTE_LEN`).
 fn sticker_pack_ids(id: &[u8], key: &[u8]) -> Option<(String, String)> {
@@ -998,6 +1022,12 @@ async fn import_item(
                         })
                     },
                     story: false,
+                    group: None,
+                    group_unknown: false,
+                })
+                .map(|mut quote| {
+                    (quote.group, quote.group_unknown) = private_reply_group(q, people);
+                    quote
                 })
             });
             let message = NewMessage {
@@ -1453,6 +1483,25 @@ fn styles(ranges: &[proto::BodyRange]) -> Vec<crate::mapping::WireStyle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_reply_quotes_find_their_group() {
+        let mut people = HashMap::new();
+        people.insert(3, Who::Group { key: vec![7; 32], title: "Team".into(), members: Vec::new(), blocked: false, ended: false });
+        people.insert(4, Who::Other);
+        let quote = |fields: &[(u32, u64)]| {
+            let mut q = proto::Quote::new();
+            for (number, value) in fields {
+                q.special_fields.mut_unknown_fields().add_varint(*number, *value);
+            }
+            q
+        };
+        assert_eq!(private_reply_group(&quote(&[]), &people), (None, false));
+        assert_eq!(private_reply_group(&quote(&[(7, 3)]), &people), (Some(ConversationId::group(&[7; 32])), false));
+        // Not a group in the backup, or only `unknownPrivateReply`: unknown.
+        assert_eq!(private_reply_group(&quote(&[(7, 4)]), &people), (None, true));
+        assert_eq!(private_reply_group(&quote(&[(6, 1)]), &people), (None, true));
+    }
 
     const ACI: Aci = Aci::from_uuid_bytes([0x11; 16]);
 

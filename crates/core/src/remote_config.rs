@@ -134,6 +134,12 @@ impl RemoteConfig {
         self.feature("stickerPackHiding")
     }
 
+    /// Sending a private reply to a group message (`privateReply.send`,
+    /// Desktop's `isPrivateReplySendEnabled`, commit 98032f987). Receiving
+    /// one needs no flag.
+    pub fn private_reply_send(&self) -> bool {
+        self.feature("privateReply.send")
+    }
 
     /// Setting our own member label in a group (`groupMemberLabels.edit`).
     pub fn group_member_labels_edit(&self) -> bool {
@@ -431,6 +437,8 @@ mod tests {
         assert!(RemoteConfig::from_pairs([("desktop.internalUser", "true")]).group_terminate_send());
         assert!(RemoteConfig::from_pairs([("desktop.shareContact.prod", "8.30.0")]).share_contact());
         assert!(RemoteConfig::from_pairs([("desktop.stickerPackHiding.prod", "8.30.0")]).sticker_pack_hiding());
+        assert!(RemoteConfig::from_pairs([("desktop.privateReply.send.prod", "8.30.0")]).private_reply_send());
+        assert!(!RemoteConfig::from_pairs([("desktop.privateReply.send.beta", "8.30.0")]).private_reply_send());
         assert!(!RemoteConfig::from_pairs([("desktop.shareContact.beta", "8.30.0")]).share_contact());
     }
 

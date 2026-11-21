@@ -62,6 +62,9 @@ pub enum Action {
         /// A sticker's pack, `(id, key)`: known from now on (Desktop's
         /// `savePackMetadata`).
         sticker_pack: Option<(Vec<u8>, Vec<u8>)>,
+        /// A private reply's quoted group (`Quote.groupId`), by its 32-byte
+        /// id, for the actor to check and find.
+        quote_group_id: Option<Vec<u8>>,
     },
     React {
         conversation: ConversationId,
@@ -1277,6 +1280,9 @@ fn map_data_message(dm: &DataMessage, origin: Origin, ts: i64, ctx: &MapContext)
         return Vec::new();
     }
 
+    // A private reply's group (Desktop's `processQuote`), checked by the
+    // actor.
+    let quote_group_id = dm.quote.as_ref().filter(|_| view_once.is_none()).and_then(|q| q.group_id.clone()).filter(|g| !g.is_empty());
     let quote = dm.quote.as_ref().filter(|_| view_once.is_none()).and_then(|q| {
         Some(Quote {
             author: other(aci_string(q.parse_author_aci()), ctx),
@@ -1295,6 +1301,8 @@ fn map_data_message(dm: &DataMessage, origin: Origin, ts: i64, ctx: &MapContext)
                 ..Default::default()
             }),
             story: false,
+            group: None,
+            group_unknown: false,
         })
     });
 
@@ -1353,6 +1361,7 @@ fn map_data_message(dm: &DataMessage, origin: Origin, ts: i64, ctx: &MapContext)
         content,
         content_image,
         sticker_pack,
+        quote_group_id,
     }]
 }
 
@@ -1708,6 +1717,8 @@ fn map_story_reply(
                 thumbnail: None,
                 attachment: None,
                 story: true,
+                group: None,
+                group_unknown: false,
             }),
             attachments: Vec::new(),
             link_preview: None,
@@ -1727,6 +1738,7 @@ fn map_story_reply(
         content: None,
         content_image: None,
         sticker_pack: None,
+        quote_group_id: None,
     });
     out
 }

@@ -203,6 +203,16 @@ next `Event::StickerManager` leaves it out. Hidden packs sync through
 Storage Service and come with transferred history, as do favorite
 stickers; installing a pack shows it again.
 
+**Private replies** (Desktop's "Reply privately", commit 98032f987):
+open the 1:1 chat with a group message's author and send with `quote` set
+to that group message's id. It goes as a private reply, its quote naming
+the group, while `RemoteConfig::private_reply_send` is on and the message
+is someone else's in a group; otherwise the quote is left off. Desktop
+offers it for an incoming, not deleted message in an accepted group that
+isn't blocked, from an author who isn't blocked. A stored private reply's
+`Quote` has `group` set (its original is in that chat) or, when we don't
+have the group, `group_unknown` (Desktop's "Unknown group"). Received and
+transferred private replies come the same way.
 
 Chat state changes go through `Command::SetChat { conversation, change }`
 (archive, mute, mark unread, block, hide stories, and a group's

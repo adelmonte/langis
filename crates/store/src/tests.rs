@@ -288,7 +288,7 @@ async fn delete_edit_attachments_and_search() {
         transcode: false,
         blurhash: None,
     }];
-    m.quote = Some(Quote { author: None, author_name: "You".into(), sent_at: 0, text: "q".into(), thumbnail: None, attachment: None, story: false });
+    m.quote = Some(Quote { author: None, author_name: "You".into(), sent_at: 0, text: "q".into(), thumbnail: None, attachment: None, story: false, group: None, group_unknown: false });
     let id = db.insert_message(&m).await.unwrap();
     let id2 = db.insert_message(&incoming("d:b", "b", 2, "Crème brûlée foxes")).await.unwrap();
 
@@ -720,7 +720,7 @@ async fn rename_authors_updates_messages_and_quotes() {
     first.author_name = None;
     let first = db.insert_message(&first).await.unwrap();
     let mut reply = incoming("g:01", "amy", 2, "re");
-    reply.quote = Some(Quote { author: Some("jon".into()), author_name: "jon".into(), sent_at: 1, text: "hi".into(), thumbnail: None, attachment: None, story: false });
+    reply.quote = Some(Quote { author: Some("jon".into()), author_name: "jon".into(), sent_at: 1, text: "hi".into(), thumbnail: None, attachment: None, story: false, group: None, group_unknown: false });
     let reply = db.insert_message(&reply).await.unwrap();
 
     let mut authors = db.message_authors().await.unwrap();
@@ -2920,6 +2920,8 @@ async fn unread_reminders_find_who_wrote_mentioned_and_replied() {
         thumbnail: None,
         attachment: None,
         story: false,
+        group: None,
+        group_unknown: false,
     };
     // received_at is sent_at + 5.
     db.insert_message(&incoming("g:aa", "alice", 100, "hi")).await.unwrap();

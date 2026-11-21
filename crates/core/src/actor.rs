@@ -144,6 +144,27 @@ pub(crate) const SETTING_IDENTITY_PENDING: &str = "identity_pending.";
 
 /// Whether an attachment is fetched whole as soon as it arrives: as the
 /// media auto-download choices say (Data usage), under the limit.
+/// Whether a quote naming a group may stand in `conversation` (Desktop's
+/// `handleDataMessage`): a 1:1 chat, the quoted author us (`None`) for
+/// their message, the chat's person for ours.
+fn private_reply_quote_ok(conversation: &ConversationId, incoming: bool, author: Option<&str>) -> bool {
+    if conversation.as_group().is_some() {
+        return false;
+    }
+    match (incoming, author) {
+        (true, author) => author.is_none(),
+        (false, Some(author)) => ConversationId::direct(author) == *conversation,
+        (false, None) => false,
+    }
+}
+
+/// The `groupId` a quote sends for a private reply (Desktop's
+/// `SendMessage`: `GroupId.encode(quote.groupId)`).
+fn quote_group_id(quote: &Quote) -> Option<Vec<u8>> {
+    let key: [u8; 32] = quote.group.as_ref()?.as_group()?.try_into().ok()?;
+    Some(crate::groups::group_identifier(key))
+}
+
 pub(crate) fn downloads_whole(attachment: &AttachmentMeta) -> bool {
     crate::auto_download::current().downloads(attachment)
 }
@@ -1737,9 +1758,13 @@ impl Actor {
                 content,
                 content_image,
                 sticker_pack,
+                quote_group_id,
             } => {
                 if let Some((id, key)) = &sticker_pack {
                     self.sticker_pack_seen(id, key).await;
+                }
+                if let Some(group_id) = quote_group_id {
+                    self.private_reply_quote(manager, &mut message, &group_id).await;
                 }
                 let mut spans = Vec::new();
                 let mut style_spans = Vec::new();
@@ -1783,19 +1808,26 @@ impl Actor {
                         {
                             quote.thumbnail = attachment.local_path.clone();
                         }
-                    } else
-                    // Like Desktop, show the quoted message's photo or link
-                    // preview image beside the quote when we have it.
-                    if let Ok(Some(quoted)) = self.db.find_message_any(quote.author.as_deref(), quote.sent_at).await {
-                        quote.thumbnail = quoted.thumbnail();
-                        // Ours knows what the wire doesn't: a voice message,
-                        // or a view-once message, which says only that
-                        // (Desktop's `copyQuoteContentFromOriginal`).
-                        if let Some(attachment) = quoted_attachment(&quoted) {
-                            if attachment.view_once {
-                                quote.text.clear();
+                    } else {
+                        // Like Desktop, show the quoted message's photo or
+                        // link preview image beside the quote when we have
+                        // it; a private reply's original is in its group.
+                        let quoted = match (&quote.group, quote.group_unknown) {
+                            (Some(group), _) => self.db.find_message(group, quote.author.as_deref(), quote.sent_at).await,
+                            (None, true) => Ok(None),
+                            (None, false) => self.db.find_message_any(quote.author.as_deref(), quote.sent_at).await,
+                        };
+                        if let Ok(Some(quoted)) = quoted {
+                            quote.thumbnail = quoted.thumbnail();
+                            // Ours knows what the wire doesn't: a voice
+                            // message, or a view-once message, which says
+                            // only that (`copyQuoteContentFromOriginal`).
+                            if let Some(attachment) = quoted_attachment(&quoted) {
+                                if attachment.view_once {
+                                    quote.text.clear();
+                                }
+                                quote.attachment = Some(attachment);
                             }
-                            quote.attachment = Some(attachment);
                         }
                     }
                 }
@@ -4188,6 +4220,7 @@ impl Actor {
                     text: Some(q.text.clone()),
                     attachments: mapping::quoted_attachments(q.attachment.as_ref()),
                     r#type: Some(data_message::quote::Type::Normal.into()),
+                    group_id: quote_group_id(q),
                     ..Default::default()
                 }
             }),
@@ -4256,6 +4289,7 @@ impl Actor {
                     text: Some(q.text.clone()),
                     attachments: mapping::quoted_attachments(q.attachment.as_ref()),
                     r#type: Some(data_message::quote::Type::Normal.into()),
+                    group_id: quote_group_id(q),
                     ..Default::default()
                 }
             }),
@@ -4424,6 +4458,25 @@ impl Actor {
             }
         };
         self.sync_delete(delete);
+    }
+
+    /// A received quote naming a group (Desktop's private reply,
+    /// `handleDataMessage` and `isQuoteAMatch`, commit 98032f987): kept only
+    /// in a 1:1 chat, quoting us when it's theirs and them when it's ours
+    /// from another device; then tied to the group, or marked unknown when
+    /// we don't have it.
+    async fn private_reply_quote(&self, manager: &SignalManager, message: &mut NewMessage, group_id: &[u8]) {
+        let Some(quote) = message.quote.as_mut() else { return };
+        let incoming = message.direction == Direction::Incoming;
+        if !private_reply_quote_ok(&message.conversation_id, incoming, quote.author.as_deref()) {
+            warn!("dropping a quote naming a group: not a private reply to this chat");
+            message.quote = None;
+            return;
+        }
+        match self.group_for_id(manager, group_id).await {
+            Some(key) => quote.group = Some(ConversationId::group(&key)),
+            None => quote.group_unknown = true,
+        }
     }
 
     async fn group_for_id(&self, manager: &SignalManager, id: &[u8]) -> Option<[u8; 32]> {
@@ -4772,6 +4825,24 @@ impl Actor {
             Some(id) => self.db.message(id).await.ok().flatten(),
             None => None,
         };
+        // A quote of another chat's message is a private reply (Desktop's
+        // `makeQuote` and `replyPrivately`, commit 98032f987): a group's
+        // message, quoted in a 1:1 chat with its author, while the remote
+        // config allows it. Anything else isn't quoted.
+        let private_group = quoted.as_ref().filter(|m| m.conversation_id != conversation).map(|m| m.conversation_id.clone());
+        let quoted = match (&private_group, quoted) {
+            (Some(group), Some(m)) => {
+                let ok = crate::remote_config().private_reply_send()
+                    && group.as_group().is_some()
+                    && m.direction == Direction::Incoming
+                    && private_reply_quote_ok(&conversation, false, m.author.as_deref());
+                if !ok {
+                    warn!("not quoting a message from another chat: not a private reply this chat can make");
+                }
+                ok.then_some(m)
+            }
+            (_, quoted) => quoted,
+        };
         let quote = quoted.as_ref().map(|m| Quote {
             author: m.author.clone(),
             author_name: match &m.author {
@@ -4784,6 +4855,8 @@ impl Actor {
             thumbnail: m.thumbnail(),
             attachment: quoted_attachment(m),
             story: false,
+            group: private_group.clone().filter(|_| m.conversation_id != conversation),
+            group_unknown: false,
         });
 
         let expire_timer = self
@@ -4838,6 +4911,10 @@ impl Actor {
                         if m.poll.is_some() { data_message::quote::Type::Poll } else { data_message::quote::Type::Normal }
                             .into(),
                     ),
+                    group_id: (m.conversation_id != conversation)
+                        .then(|| m.conversation_id.as_group().and_then(|k| <[u8; 32]>::try_from(k).ok()))
+                        .flatten()
+                        .map(crate::groups::group_identifier),
                     ..Default::default()
                 }
             }),
@@ -6740,5 +6817,41 @@ impl Every {
         }
         self.last = Some(now);
         true
+    }
+}
+
+#[cfg(test)]
+mod private_reply_tests {
+    use super::*;
+
+    #[test]
+    fn private_reply_quotes_stand_only_in_their_one_to_one_chat() {
+        let chat = ConversationId::direct("bob");
+        // Theirs quotes us; ours (from another device) quotes them.
+        assert!(private_reply_quote_ok(&chat, true, None));
+        assert!(!private_reply_quote_ok(&chat, true, Some("bob")));
+        assert!(private_reply_quote_ok(&chat, false, Some("bob")));
+        assert!(!private_reply_quote_ok(&chat, false, Some("carol")));
+        assert!(!private_reply_quote_ok(&chat, false, None));
+        // Never in a group.
+        assert!(!private_reply_quote_ok(&ConversationId::group(&[7; 32]), true, None));
+    }
+
+    #[test]
+    fn a_private_reply_sends_its_groups_id() {
+        let mut quote = Quote {
+            author: None,
+            author_name: String::new(),
+            sent_at: 1,
+            text: String::new(),
+            thumbnail: None,
+            attachment: None,
+            story: false,
+            group: None,
+            group_unknown: false,
+        };
+        assert_eq!(quote_group_id(&quote), None);
+        quote.group = Some(ConversationId::group(&[7; 32]));
+        assert_eq!(quote_group_id(&quote), Some(crate::groups::group_identifier([7; 32])));
     }
 }

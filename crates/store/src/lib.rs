@@ -234,6 +234,15 @@ pub struct Quote {
     /// It quotes a story (a reply to one, one to one).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub story: bool,
+    /// A private reply (Desktop's, commit 98032f987): it quotes a message
+    /// in this group, from a 1:1 chat with its author. Its original is
+    /// found there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<ConversationId>,
+    /// A private reply whose group isn't known here (Desktop's
+    /// `isPrivateReplyGroupUnknown`, "Unknown group").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub group_unknown: bool,
 }
 
 /// What a quote knows of the quoted attachment (Signal's

@@ -183,6 +183,8 @@ async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
         thumbnail,
         attachment: message.attachments.first().map(langis_store::QuotedAttachment::of),
         story: false,
+        group: None,
+        group_unknown: false,
     };
     let react = |emoji: &str, from: Option<&str>| Reaction { emoji: emoji.into(), author: from.map(|f| aci(f).into()), sent_at: now };
 
@@ -1290,6 +1292,8 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                         thumbnail: m.thumbnail(),
                         attachment: m.attachments.first().map(langis_store::QuotedAttachment::of),
                         story: false,
+                        group: None,
+                        group_unknown: false,
                     }),
                     None => None,
                 };
@@ -2849,6 +2853,8 @@ async fn demo_quote(db: &AppDb, quote: Option<i64>) -> Option<Quote> {
         thumbnail: m.thumbnail(),
         attachment: m.attachments.first().map(langis_store::QuotedAttachment::of),
         story: false,
+        group: None,
+        group_unknown: false,
     })
 }
 

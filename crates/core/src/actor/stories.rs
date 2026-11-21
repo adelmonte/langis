@@ -377,6 +377,8 @@ impl Actor {
             thumbnail,
             attachment: None,
             story: true,
+            group: None,
+            group_unknown: false,
         };
         let message = NewMessage {
             conversation_id: conversation.clone(),
