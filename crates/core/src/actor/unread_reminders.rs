@@ -48,6 +48,7 @@ impl Actor {
         let eligible = |chat: &langis_store::Conversation| {
             chat.kind != ConversationKind::NoteToSelf
                 && !chat.left
+                && chat.removal_stage.is_none()
                 && !chat.blocked
                 && !chat.archived
                 && chat.muted
@@ -66,6 +67,12 @@ impl Actor {
             let Some(chat) = chats.iter().find(|c| c.id == conversation) else { continue };
             let mut reminder = self.db.unread_reminder_data(&conversation, &me).await?;
             if reminder.unread == 0 {
+                continue;
+            }
+            // Desktop's `maybeNotify` asks the active notification profile
+            // as for a plain message, and tries the next chat if it says no.
+            if self.db.notification_silenced(&conversation, false, false, now.max(0) as u64).await? {
+                debug!(%conversation, "unread reminder suppressed by the active notification profile");
                 continue;
             }
             // Desktop's `getSummary`: counts only for kinds on while muted.

@@ -252,8 +252,10 @@ conversation, reminder }` for the chat waiting longest; `reminder`
 us and replied to us, mention and reply counts zeroed when that kind is off
 there while muted. Show it as a notification (Desktop's wording is in
 `ts/util/unreadReminders.std.ts`) and answer `Command::UnreadReminderShown
-{ conversation }`; until you do, it comes again each hour. Notification
-profiles aren't checked.
+{ conversation }`; until you do, it comes again each hour. A chat the
+active notification profile silences (as a plain message, not a mention or
+reply) gets no reminder, and the next chat due gets its turn, as in
+Desktop's `maybeNotify`. A removed contact's chat gets none either.
 
 **Call quality survey.** After a call ends, `Event::CallQualitySurvey`
 (`call_survey::CallSurvey`: the chat, Desktop's call type, when it
