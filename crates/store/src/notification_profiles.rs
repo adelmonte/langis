@@ -474,6 +474,22 @@ impl AppDb {
         Ok(!should_notify(state.active.as_ref(), conversation, is_call, mention_or_reply))
     }
 
+    /// Removes the profiles deleted at or before `before` (unix millis),
+    /// returning their ids. Desktop's `notificationProfilesService` drops a
+    /// deleted profile once the message queue time has passed since its
+    /// deletion (`getMessageQueueTime`, 30 days or more), so pass now
+    /// minus that.
+    pub async fn remove_notification_profiles_deleted_before(&self, before: u64) -> Result<Vec<String>> {
+        let mut tx = self.write().await?;
+        let ids: Vec<String> =
+            sqlx::query_scalar("DELETE FROM notification_profiles WHERE deleted_at > 0 AND deleted_at <= ? RETURNING id")
+                .bind(before.min(i64::MAX as u64) as i64)
+                .fetch_all(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(ids)
+    }
+
     /// Changes the profiles or override in one transaction.
     pub async fn edit_notification_profiles(&self, edit: NotificationProfileEdit) -> Result<NotificationProfileChanges> {
         let mut tx = self.write().await?;
@@ -763,6 +779,21 @@ mod tests {
             db.notification_profile_override().await.unwrap(),
             Some(NotificationProfileOverride::Enabled { id: "bb".into(), ends_at: None, set_at: 70 })
         );
+    }
+
+    #[tokio::test]
+    async fn deleted_profiles_go_after_the_retention_window() {
+        let db = test_db().await;
+        for id in ["old", "recent", "kept"] {
+            db.edit_notification_profiles(NotificationProfileEdit::Save(profile(id, 1))).await.unwrap();
+        }
+        db.edit_notification_profiles(NotificationProfileEdit::Delete { id: "old".into(), at: 100 }).await.unwrap();
+        db.edit_notification_profiles(NotificationProfileEdit::Delete { id: "recent".into(), at: 300 }).await.unwrap();
+        assert_eq!(db.remove_notification_profiles_deleted_before(200).await.unwrap(), vec!["old".to_owned()]);
+        let mut left: Vec<_> = db.notification_profiles().await.unwrap().into_iter().map(|p| p.id).collect();
+        left.sort();
+        assert_eq!(left, ["kept", "recent"]);
+        assert!(db.remove_notification_profiles_deleted_before(200).await.unwrap().is_empty());
     }
 
     #[tokio::test]

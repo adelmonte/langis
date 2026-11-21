@@ -62,8 +62,12 @@ impl Actor {
         let target = conversation.to_string();
         let mut info = self.sender_key_info(&target).await;
         let endorsements = self.group_endorsements(manager, conversation, key).await;
+        let left_out = self.group_members_left_out(key).await;
+        if !left_out.is_empty() {
+            info!(count = left_out.len(), "leaving blocked and unregistered members out of a group send");
+        }
         let result = manager
-            .send_message_to_group_with_sender_key(key, body, timestamp, only, &mut info, endorsements.as_ref())
+            .send_message_to_group_with_sender_key(key, body, timestamp, only, &left_out, &mut info, endorsements.as_ref())
             .await;
         self.save_sender_key_info(&target, &info).await;
         let summary = result?;
@@ -130,6 +134,26 @@ impl Actor {
             }
         }
         fetched
+    }
+
+    /// The members a group message leaves out (Desktop's
+    /// `getConversationMembers`): blocked ones and those found
+    /// unregistered in the last six hours. They get no send state, as in
+    /// Desktop, whose recipients they aren't; they keep counting as
+    /// members for our sender key, so no new key is made for leaving them
+    /// out.
+    async fn group_members_left_out(&self, key: &[u8]) -> Vec<ServiceId> {
+        let skip = match self.db.left_out_of_group_sends(now_millis()).await {
+            Ok(skip) => skip,
+            Err(error) => {
+                warn!(%error, "couldn't read who to leave out of a group send");
+                return Vec::new();
+            }
+        };
+        if skip.is_empty() {
+            return Vec::new();
+        }
+        self.group_full_members(key).await.into_iter().filter(|m| skip.contains(&m.service_id_string())).collect()
     }
 
     /// The group's full members (us included), as presage keeps the group.

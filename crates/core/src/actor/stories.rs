@@ -952,6 +952,33 @@ impl Actor {
         }
     }
 
+    /// Desktop's `removeMemberFromAllDistributionLists`, from
+    /// `removeContact`: someone removed comes off the story lists that
+    /// name them, here and in Storage Service. My Story as "All except"
+    /// keeps them excluded. A failed write isn't followed by a re-read
+    /// here (this also runs inside one); the next one puts the lists back
+    /// as Storage Service has them.
+    pub(super) async fn remove_from_story_lists(&self, sid: &str) {
+        let changed = {
+            let _edit = self.story_lists_edit.lock().await;
+            let mut lists = self.story_lists().await;
+            let changed = without_member(&mut lists, sid);
+            if changed.is_empty() {
+                return;
+            }
+            self.save_story_settings(Some(lists), None, None, None, None).await;
+            changed
+        };
+        info!(lists = changed.len(), "took a removed contact off our story lists");
+        let Some(manager) = self.manager() else { return };
+        for list in &changed {
+            if let Err(error) = storage::write_story_list(&manager, list, 0).await {
+                return self.error("couldn't update the story's privacy on your other devices", format!("{error:#}"));
+            }
+        }
+        self.storage_written();
+    }
+
     /// Desktop's `deleteDistributionList`: gone here, marked deleted in
     /// Storage Service, and the stories sent to it deleted for everyone.
     pub(super) async fn delete_story_list(self: Rc<Self>, id: String) {
@@ -1199,6 +1226,23 @@ pub(super) enum StoryJobSync {
     Retry,
 }
 
+/// Takes `sid` off every list that shares with them (Desktop's
+/// `removeMembersFromDistributionList`, for each list naming them) and
+/// returns the lists changed. My Story as a block list names them as
+/// excluded, and Desktop's removal adds them to that list again, so it
+/// stays as it is.
+fn without_member(lists: &mut [crate::StoryList], sid: &str) -> Vec<crate::StoryList> {
+    let mut changed = Vec::new();
+    for list in lists.iter_mut() {
+        if !list.members.iter().any(|m| m == sid) || (list.is_my_story() && list.block_list) {
+            continue;
+        }
+        list.members.retain(|m| m != sid);
+        changed.push(list.clone());
+    }
+    changed
+}
+
 /// Desktop's `sendStoryMessage` for story lists: everyone on any of them,
 /// once, with the lists that send it to them, allowed to reply if any of
 /// those lists allows replies.
@@ -1343,6 +1387,25 @@ mod tests {
 
     fn people(names: &[&str]) -> Vec<String> {
         names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_removed_contact_comes_off_the_lists_that_share_with_them() {
+        let mut lists = vec![
+            crate::StoryList { members: people(&["a", "b"]), block_list: true, ..crate::StoryList::my_story() },
+            crate::StoryList { members: people(&["a", "c"]), ..list("close", true) },
+            crate::StoryList { members: people(&["c"]), ..list("other", true) },
+        ];
+        let changed = without_member(&mut lists, "a");
+        assert_eq!(changed.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), ["close"]);
+        // My Story's "All except" still leaves them out.
+        assert_eq!(lists[0].members, people(&["a", "b"]));
+        assert_eq!(lists[1].members, people(&["c"]));
+        assert!(without_member(&mut lists, "a").is_empty());
+        // My Story as "Only share with" drops them.
+        let mut only = vec![crate::StoryList { members: people(&["a", "b"]), block_list: false, ..crate::StoryList::my_story() }];
+        assert_eq!(without_member(&mut only, "a").len(), 1);
+        assert_eq!(only[0].members, people(&["b"]));
     }
 
     #[test]

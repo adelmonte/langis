@@ -1399,7 +1399,7 @@ impl<S: Store> Manager<S, Registered> {
         timestamp: u64,
         only: Option<&[ServiceId]>,
     ) -> Result<Vec<(ServiceId, Result<(), MessageSenderError>)>, Error<S::Error>> {
-        self.send_message_to_group_inner(master_key_bytes, message, timestamp, only, None)
+        self.send_message_to_group_inner(master_key_bytes, message, timestamp, only, &[], None)
             .await
             .map(|summary| summary.results)
     }
@@ -1412,13 +1412,19 @@ impl<S: Store> Manager<S, Registered> {
     /// Members we have no profile key for are sent to one by one with their
     /// endorsement, when we have one. The summary has each recipient's
     /// result, also for those sent to one by one; an `Err` means nobody was
-    /// sent the message.
+    /// sent the message. Members in `left_out` aren't sent to and get no
+    /// result, without making it a partial send (Desktop's
+    /// `getConversationMembers` leaves out members it takes for
+    /// unregistered, and blocked ones); they still count as members, so
+    /// leaving them out makes no new sender key.
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_message_to_group_with_sender_key(
         &mut self,
         master_key_bytes: &[u8],
         message: impl Into<ContentBody>,
         timestamp: u64,
         only: Option<&[ServiceId]>,
+        left_out: &[ServiceId],
         info: &mut SenderKeyInfo,
         endorsements: Option<&GroupSendEndorsements>,
     ) -> Result<GroupSendSummary, Error<S::Error>> {
@@ -1427,6 +1433,7 @@ impl<S: Store> Manager<S, Registered> {
             message,
             timestamp,
             only,
+            left_out,
             Some((info, endorsements)),
         )
         .await
@@ -1438,6 +1445,7 @@ impl<S: Store> Manager<S, Registered> {
         message: impl Into<ContentBody>,
         timestamp: u64,
         only: Option<&[ServiceId]>,
+        left_out: &[ServiceId],
         sender_key: Option<(&mut SenderKeyInfo, Option<&GroupSendEndorsements>)>,
     ) -> Result<GroupSendSummary, Error<S::Error>> {
         let mut content_body = message.into();
@@ -1471,11 +1479,18 @@ impl<S: Store> Manager<S, Registered> {
             .expect("Time went backwards")
             .as_millis() as u64;
         let mut recipients = Vec::new();
+        let members: Vec<ServiceId> = group
+            .members
+            .iter()
+            .filter(|m| m.aci != our_aci)
+            .map(|m| ServiceId::from(m.aci))
+            .collect();
         for member in group
             .members
             .into_iter()
             .filter(|m| m.aci != our_aci)
             .filter(|m| only.is_none_or(|only| only.contains(&ServiceId::from(m.aci))))
+            .filter(|m| !left_out.contains(&ServiceId::from(m.aci)))
         {
             let member_id: ServiceId = member.aci.into();
             let unidentified_access = match self.store.profile_key(&member_id).await? {
@@ -1534,6 +1549,7 @@ impl<S: Store> Manager<S, Registered> {
                             endorsements,
                             now_ms,
                             partial: only.is_some(),
+                            members: Some(members),
                         },
                     )
                     .await?;

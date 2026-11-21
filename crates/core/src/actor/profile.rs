@@ -98,7 +98,12 @@ impl Actor {
         let Some(key) = key else { return };
         let remote = match profiles::fetch(&manager, aci, key).await {
             Ok(remote) => remote,
-            Err(error) => return debug!(error = %format!("{error:#}"), "profile fetch failed"),
+            Err(error) => {
+                if profiles::is_not_found(&error) {
+                    self.check_account_exists(&manager, &sid).await;
+                }
+                return debug!(error = %format!("{error:#}"), "profile fetch failed");
+            }
         };
         self.save_remote_profile(&sid, &remote).await;
         let dir = self.config.data_dir.join("avatars");
@@ -114,6 +119,25 @@ impl Actor {
             }
         }
         self.download_badges();
+    }
+
+    /// After a profile fetch's 404, Desktop's `getProfile` asks whether
+    /// the account still exists (`checkAccountExistence`) and, if not,
+    /// marks them unregistered (`setUnregistered`): their chat then shows
+    /// "no longer on Signal" and group sends leave them out. A failed check
+    /// changes nothing.
+    pub(super) async fn check_account_exists(&self, manager: &SignalManager, sid: &str) {
+        if sid == self.self_aci() || sid == langis_store::SIGNAL_ACI {
+            return;
+        }
+        match profiles::account_exists(manager, sid).await {
+            Ok(true) => {}
+            Ok(false) => {
+                info!("profile not found and the account is gone; marking them unregistered");
+                self.note_registration(&[], &[(sid.to_owned(), now_millis())]).await;
+            }
+            Err(error) => debug!(error = %format!("{error:#}"), "couldn't check whether an account exists"),
+        }
     }
 
     /// Another of our devices changed our profile: fetch it again.

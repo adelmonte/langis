@@ -17,8 +17,14 @@ use crate::StoryList;
 /// [`SenderKeyInfo`] (Desktop keeps it on the conversation or the
 /// distribution list as `senderKeyInfo`).
 pub(crate) fn sender_key_setting(target: &str) -> String {
-    format!("sender_key.{target}")
+    format!("{SENDER_KEY_PREFIX}{target}")
 }
+
+/// The prefix of [`sender_key_setting`]'s keys.
+pub(crate) const SENDER_KEY_PREFIX: &str = "sender_key.";
+
+/// The prefix of [`endorsements_setting`]'s keys.
+pub(crate) const ENDORSEMENTS_PREFIX: &str = "group_send_endorsements.";
 
 /// The sender key target for a story list.
 pub(crate) fn list_target(list_id: &str) -> String {
@@ -29,7 +35,7 @@ pub(crate) fn list_target(list_id: &str) -> String {
 /// [`GroupSendEndorsements`] (Desktop's `groupSendCombinedEndorsement` and
 /// `groupSendMemberEndorsement` tables).
 pub(crate) fn endorsements_setting(conversation: &str) -> String {
-    format!("group_send_endorsements.{conversation}")
+    format!("{ENDORSEMENTS_PREFIX}{conversation}")
 }
 
 /// Our sender key state from its setting; a new one when there's none (or

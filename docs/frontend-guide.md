@@ -91,7 +91,12 @@ newer client).
 
 Whose data is here is told by Note to Self's id in the app database. A
 link to the same account, or to a data directory with no account yet, goes
-straight on. `LinkedOtherAccount` can also come at a start, when the app
+straight on. Linking the same account again keeps its chats, messages,
+media and settings, as Desktop's `createAccount` does
+(`removeAllConfiguration`): only the registration and protocol state
+(sessions, pre-keys, sender keys, group send endorsements) start over, and
+no history is transferred, since it isn't a clean start. A data directory
+with no account yet starts from an empty app database. `LinkedOtherAccount` can also come at a start, when the app
 closed while the question was open: nothing of the new account runs, and
 nothing is deleted, until the answer. Linking again with `Command::Link`
 also drops the waiting link. Unlike Desktop, which asks before it
@@ -103,8 +108,12 @@ recent history: `Event::History(progress)` reports how far along it is.
 `Command::SkipHistory` skips it.
 
 `Event::Unlinked` means this device is no longer linked: the phone removed
-it, or you sent `Command::Unlink`. The backend has already wiped the local
-account and history; show the link screen again.
+it, or you sent `Command::Unlink`. After `Command::Unlink` the backend has
+already wiped the local account and history. When the phone removed it,
+the chats stay (Desktop's `unlinkAndDisconnect` erases only the
+configuration), and linking the same account again picks them up; linking
+another account asks with `LinkedOtherAccount`. Show the link screen again
+(`NeedsLinking` follows).
 
 ## 4. Connection state
 
@@ -213,11 +222,16 @@ admins while they're neither a member nor banned.
 
 **No longer on Signal.** A send that finds someone unregistered (the
 server's 404) sets their chat's `unregistered_at`, as Desktop's
-`discoveredUnregisteredAt`; a send that reaches them, or a message from
+`discoveredUnregisteredAt`. So does a profile fetch that gets a 404 when
+the server then says the account doesn't exist (Desktop's `getProfile`
+and `checkAccountExistence`). A send that reaches them, or a message from
 them, clears it. `Conversation::ever_unregistered()` is Desktop's test for
 replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test
-for leaving them out of the people offered for a new chat or group.
+for leaving them out of the people offered for a new chat or group. Group
+messages leave out such members, and blocked ones, as Desktop's
+`getConversationMembers` does (`AppDb::left_out_of_group_sends`): they get
+no send state for that message, and our sender key isn't replaced for it.
 
 **Message details.** `db.send_states(id)` gives each recipient's status
 for Desktop's `MessageDetail`. `Message::sealed_sender` lists who it went
@@ -246,7 +260,11 @@ Desktop makes no live ones either.
 **Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
 a contact row (`removeContact`): their chat's `removal_stage` becomes
 `JustNotification`, our profile is no longer shared with them, the chat
-gets a `Notice::ContactRemoved`, and Storage Service's `hidden` is set.
+gets a `Notice::ContactRemoved`, they come off our story lists (not My
+Story's "All except", which keeps leaving them out; `Event::StorySettingsChanged`
+follows), and Storage Service's `hidden` is set. A removal made on another
+device (`hidden` read from Storage Service) does the same here, notice
+included, as Desktop's `mergeContactRecord` calls `removeContact`.
 Leave them out of the people offered for a new chat. The chat isn't
 `accepted` while removed, but with `JustNotification` it keeps its composer
 (Desktop shows message request actions only for `MessageRequest`, which it
@@ -276,8 +294,10 @@ conversation, reminder }` for the chat waiting longest; `reminder`
 us and replied to us, mention and reply counts zeroed when that kind is off
 there while muted. Show it as a notification (Desktop's wording is in
 `ts/util/unreadReminders.std.ts`) and answer `Command::UnreadReminderShown
-{ conversation }`; until you do, it comes again each hour. Notification
-profiles aren't checked.
+{ conversation }`; until you do, it comes again each hour. A chat the
+active notification profile silences (as a plain message, not a mention or
+reply) gets no reminder, and the next chat due gets its turn, as in
+Desktop's `maybeNotify`. A removed contact's chat gets none either.
 
 **Call quality survey.** After a call ends, `Event::CallQualitySurvey`
 (`call_survey::CallSurvey`: the chat, Desktop's call type, when it
@@ -325,7 +345,11 @@ through. It turns on by a weekly schedule (`schedule_start` and
 `schedule_end` as hhmm, `schedule_days` Monday first; an end at or before
 the start runs into the next day) or by hand. Read them with
 `AppDb::notification_profiles()` (newest first, deleted ones with
-`deleted_at` set; `langis_store::current_profiles` drops those) and ask
+`deleted_at` set; `langis_store::current_profiles` drops those; the core
+removes a deleted one for good once the message queue time, 30 days or
+the remote config's longer `global.messageQueueTimeInSeconds`, has passed,
+checked after each Storage Service read, as Desktop's
+`notificationProfilesService` does) and ask
 which is on with `AppDb::notification_profile_state(now)`: the profile on,
 and `next_change`, when to ask again. `AppDb::notification_silenced(chat,
 is_call, mention_or_reply, now)` (or `langis_store::should_notify` with the

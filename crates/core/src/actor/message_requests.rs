@@ -193,13 +193,24 @@ impl Actor {
                 return false;
             }
         }
+        self.contact_removed(conversation).await;
+        true
+    }
+
+    /// The rest of Desktop's `removeContact` once their chat is marked
+    /// removed, here or by Storage Service's `hidden`: our profile no
+    /// longer shared, the message request answer forgotten, the "You
+    /// removed this person" notice, and off our story lists.
+    pub(super) async fn contact_removed(&self, conversation: &ConversationId) {
         self.set_profile_sharing_here(conversation, false).await;
         if let Err(error) = self.db.set_message_request(conversation, MessageRequestResponse::Unknown).await {
             warn!(%error, "failed to forget the message request answer");
         }
         self.notice(conversation, self.next_timestamp(), Notice::ContactRemoved).await;
         self.emit(Event::ConversationsChanged);
-        true
+        if let Some(sid) = conversation.as_direct() {
+            self.remove_from_story_lists(sid).await;
+        }
     }
 
     /// Sending to someone we removed restores them (Desktop's
