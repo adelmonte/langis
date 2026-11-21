@@ -1265,6 +1265,8 @@ impl Actor {
 
         let (url_tx, url_rx) = oneshot::channel();
         let this = self.clone();
+        let had_url = Rc::new(std::cell::Cell::new(false));
+        let shown = had_url.clone();
         let (result, ()) = future::join(
             Manager::link_secondary_device(
                 self.store.clone(),
@@ -1274,6 +1276,7 @@ impl Actor {
             ),
             async move {
                 if let Ok(url) = url_rx.await {
+                    shown.set(true);
                     this.emit(Event::LinkUrl(url));
                 }
             },
@@ -1296,8 +1299,9 @@ impl Actor {
                 self.emit(Event::ConversationsChanged);
             }
             Err(error) => {
-                warn!(%error, "linking failed");
-                self.emit(Event::LinkFailed(error.to_string()));
+                let kind = crate::linking::classify(&error, had_url.get());
+                warn!(%error, ?kind, "linking failed");
+                self.emit(Event::LinkFailed { error: kind, detail: error.to_string() });
             }
         }
     }

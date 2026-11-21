@@ -75,8 +75,18 @@ linking:
 | `Event::NeedsLinking` | Show a link screen, and send `Command::Link`. |
 | `Event::LinkUrl(url)` | Draw `url` as a QR code. The user scans it in Signal on their phone (Settings, Linked devices). |
 | `Event::Linked` | The phone scanned the code. Show a "Syncing contacts and groups" step until `Ready`. |
-| `Event::LinkFailed(why)` | Show `why`; send `Command::Link` again to retry. |
+| `Event::LinkFailed { error, detail }` | Show the failure by its `LinkError` kind (below); send `Command::Link` again to retry. `detail` is the error's text, for logs. |
 | `Event::Ready { aci, phone }` | Linked. Show the chat list. |
+
+`LinkError` sorts failures as Signal Desktop's install screen does
+(`ts/state/ducks/installer.preload`): `Timeout` (no code came; Desktop
+shows "The QR code couldn't load" and Retry in the code's box), `Expired`
+(the code went unscanned until the server closed it; Desktop shows only
+"Refresh code"), `Unknown` (anything else once the code showed; "An
+unexpected error occurred", Retry), and three for a full error screen:
+`ConnectionFailed` (the server couldn't be reached for a code),
+`TooManyDevices` (HTTP 411) and `TooOld` (HTTP 409, the server wants a
+newer client).
 
 On later starts, `Ready` comes straight away. After linking, the phone sends
 recent history: `Event::History(progress)` reports how far along it is.

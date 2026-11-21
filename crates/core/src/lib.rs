@@ -47,6 +47,8 @@ pub mod routes;
 pub mod server_alerts;
 pub mod share_contact;
 mod sender_keys;
+pub mod linking;
+pub use linking::LinkError;
 
 pub use remote_config::{ConfigCell, RemoteConfig};
 pub(crate) use remote_config::current as remote_config;
@@ -1238,7 +1240,9 @@ pub enum Event {
     /// (contacts, groups) runs until `Ready` (Desktop's "Syncing contacts
     /// and groups" step).
     Linked,
-    LinkFailed(String),
+    /// Linking failed: what kind of failure (Desktop's install screen shows
+    /// each its own way) and the error's text, for logs.
+    LinkFailed { error: LinkError, detail: String },
     /// Account is ready. Emitted at startup when already linked, and after linking.
     Ready { phone: Option<String>, aci: String },
     Connection(ConnectionState),
