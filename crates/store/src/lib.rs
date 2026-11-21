@@ -830,6 +830,10 @@ pub enum Notice {
     Verified { who: String, verified: bool, local: bool },
 }
 
+/// A group change's `by` when no one's known to have made it (transferred
+/// history without the updater): Desktop's "unknown" wording.
+pub const UNKNOWN_ACTOR: &str = "unknown";
+
 /// One change to a group, as a notice shows it. Service ids are `None`
 /// for us.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

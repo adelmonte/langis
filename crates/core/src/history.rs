@@ -451,6 +451,9 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
         Some((sid != me).then_some(sid))
     };
     let required = |bytes: &Vec<u8>| -> Option<Option<String>> { person(&Some(bytes.clone())) };
+    // Who made a change, when the backup doesn't say: Desktop's "unknown"
+    // wording ("The group name changed to …").
+    let actor = |bytes: &Option<Vec<u8>>| -> Option<String> { person(bytes).unwrap_or_else(|| Some(langis_store::UNKNOWN_ACTOR.to_owned())) };
     let inviter = |bytes: &Option<Vec<u8>>| match person(bytes) {
         Some(None) => Inviter::Us,
         Some(Some(id)) => Inviter::Person { id },
@@ -459,35 +462,35 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
     let admins_only = |level: proto::GroupV2AccessLevel| level == proto::GroupV2AccessLevel::ADMINISTRATOR;
     let group = |by: Option<String>, change: GroupNotice| Some(Notice::Group { by, change });
     match update.update.as_ref()? {
-        U::GroupNameUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Title { title: u.newGroupName.clone().unwrap_or_default() }),
-        U::GroupAvatarUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Avatar),
+        U::GroupNameUpdate(u) => group(actor(&u.updaterAci), GroupNotice::Title { title: u.newGroupName.clone().unwrap_or_default() }),
+        U::GroupAvatarUpdate(u) => group(actor(&u.updaterAci), GroupNotice::Avatar),
         U::GroupDescriptionUpdate(u) => {
-            group(person(&u.updaterAci)?, GroupNotice::Description { description: Some(u.newDescription.clone().unwrap_or_default()) })
+            group(actor(&u.updaterAci), GroupNotice::Description { description: Some(u.newDescription.clone().unwrap_or_default()) })
         }
         U::GroupMembershipAccessLevelChangeUpdate(u) => group(
-            person(&u.updaterAci)?,
+            actor(&u.updaterAci),
             GroupNotice::MemberAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
         ),
         U::GroupMemberLabelAccessLevelChangeUpdate(u) => group(
-            person(&u.updaterAci)?,
+            actor(&u.updaterAci),
             GroupNotice::LabelAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
         ),
         U::GroupAttributesAccessLevelChangeUpdate(u) => group(
-            person(&u.updaterAci)?,
+            actor(&u.updaterAci),
             GroupNotice::InfoAccess { admins_only: admins_only(u.accessLevel.enum_value_or_default()) },
         ),
         U::GroupAnnouncementOnlyChangeUpdate(u) => {
-            group(person(&u.updaterAci)?, GroupNotice::AnnouncementsOnly { on: u.isAnnouncementOnly })
+            group(actor(&u.updaterAci), GroupNotice::AnnouncementsOnly { on: u.isAnnouncementOnly })
         }
         U::GroupAdminStatusUpdate(u) => group(
-            person(&u.updaterAci)?,
+            actor(&u.updaterAci),
             GroupNotice::Admin { member: required(&u.memberAci)?, admin: u.wasAdminStatusGranted },
         ),
         U::GroupMemberLeftUpdate(u) => {
             let member = required(&u.aci)?;
             group(member.clone(), GroupNotice::Removed { member })
         }
-        U::GroupMemberRemovedUpdate(u) => group(person(&u.removerAci)?, GroupNotice::Removed { member: required(&u.removedAci)? }),
+        U::GroupMemberRemovedUpdate(u) => group(actor(&u.removerAci), GroupNotice::Removed { member: required(&u.removedAci)? }),
         U::SelfInvitedToGroupUpdate(u) => group(person(&u.inviterAci)?, GroupNotice::Invited { member: None }),
         U::SelfInvitedOtherUserToGroupUpdate(u) => group(None, GroupNotice::Invited { member: required(&u.inviteeServiceId)? }),
         U::GroupUnknownInviteeUpdate(u) => group(person(&u.inviterAci)?, GroupNotice::InvitedMany { count: u.inviteeCount }),
@@ -503,12 +506,12 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
             let member = required(&u.newMemberAci)?;
             group(member.clone(), GroupNotice::Added { member })
         }
-        U::GroupMemberAddedUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Added { member: required(&u.newMemberAci)? }),
+        U::GroupMemberAddedUpdate(u) => group(actor(&u.updaterAci), GroupNotice::Added { member: required(&u.newMemberAci)? }),
         U::GroupSelfInvitationRevokedUpdate(u) => {
             group(person(&u.revokerAci)?, GroupNotice::InviteRemoved { member: None, inviter: Inviter::Unknown })
         }
         U::GroupInvitationRevokedUpdate(u) => {
-            let by = person(&u.updaterAci)?;
+            let by = actor(&u.updaterAci);
             match u.invitees.as_slice() {
                 [one] => {
                     let member = person(&one.inviteeAci).flatten();
@@ -529,7 +532,7 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
         }
         U::GroupJoinRequestApprovalUpdate(u) => {
             let member = required(&u.requestorAci)?;
-            let by = person(&u.updaterAci)?;
+            let by = actor(&u.updaterAci);
             if u.wasApproved {
                 group(by, GroupNotice::Approved { member })
             } else {
@@ -544,20 +547,20 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
             let member = required(&u.requestorAci)?;
             group(member.clone(), GroupNotice::RequestRemoved { member })
         }
-        U::GroupInviteLinkResetUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::LinkReset),
+        U::GroupInviteLinkResetUpdate(u) => group(actor(&u.updaterAci), GroupNotice::LinkReset),
         U::GroupInviteLinkEnabledUpdate(u) => {
-            group(person(&u.updaterAci)?, GroupNotice::LinkOn { approval: u.linkRequiresAdminApproval })
+            group(actor(&u.updaterAci), GroupNotice::LinkOn { approval: u.linkRequiresAdminApproval })
         }
         U::GroupInviteLinkAdminApprovalUpdate(u) => {
-            group(person(&u.updaterAci)?, GroupNotice::LinkApproval { on: u.linkRequiresAdminApproval })
+            group(actor(&u.updaterAci), GroupNotice::LinkApproval { on: u.linkRequiresAdminApproval })
         }
-        U::GroupInviteLinkDisabledUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::LinkOff),
+        U::GroupInviteLinkDisabledUpdate(u) => group(actor(&u.updaterAci), GroupNotice::LinkOff),
         U::GroupMemberJoinedByLinkUpdate(u) => {
             let member = required(&u.newMemberAci)?;
             group(member.clone(), GroupNotice::JoinedByLink { member })
         }
         U::GroupExpirationTimerUpdate(u) => Some(Notice::Timer { by: person(&u.updaterAci)?, seconds: (u.expiresInMs / 1000) as u32 }),
-        U::GroupTerminateChangeUpdate(u) => group(person(&u.updaterAci)?, GroupNotice::Ended),
+        U::GroupTerminateChangeUpdate(u) => group(actor(&u.updaterAci), GroupNotice::Ended),
         _ => None,
     }
 }
@@ -1867,6 +1870,8 @@ mod tests {
                 Notice::Group { by: Some(alice.clone()), change: GroupNotice::Title { title: "Hikers".into() } },
                 Notice::Group { by: Some(bob.clone()), change: GroupNotice::Removed { member: Some(bob.clone()) } },
                 Notice::Group { by: Some(bob.clone()), change: GroupNotice::AcceptedInvite { member: Some(bob.clone()), inviter: Inviter::Us } },
+                // No updater: kept, as Desktop's "unknown" wording.
+                Notice::Group { by: Some(langis_store::UNKNOWN_ACTOR.into()), change: GroupNotice::Avatar },
                 Notice::Group { by: None, change: GroupNotice::Ended },
             ]
         );
