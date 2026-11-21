@@ -323,7 +323,6 @@ async fn edits_come_back_with_their_history() {
 #[test]
 fn the_padded_gzip_holds_the_stream_and_hides_its_size() {
     use std::io::Read as _;
-    use protobuf::Message as _;
     // BackupInfo, then a recipient and a run of chat items, delimited.
     let mut plain = Vec::new();
     super::put(&mut plain, &proto::BackupInfo::new()).unwrap();
