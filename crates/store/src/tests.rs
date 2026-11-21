@@ -1,10 +1,23 @@
 use super::*;
 
 /// A database on disk, opened as the app opens it: reads on their own
-/// connections, which can't write, and writes queued for one. (The
-/// directory is left for the OS to clear.)
+/// connections, which can't write, and writes queued for one. The
+/// directory is kept while the test process runs (the database is never
+/// closed); earlier runs' are removed once an hour old, since /tmp is often
+/// a small RAM disk.
 async fn test_db() -> AppDb {
-    let dir = tempfile::tempdir().unwrap().keep();
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    let parent = std::env::temp_dir().join("langis-store-tests");
+    SWEPT.call_once(|| {
+        for entry in std::fs::read_dir(&parent).into_iter().flatten().flatten() {
+            let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 3600);
+            if old {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    });
+    std::fs::create_dir_all(&parent).unwrap();
+    let dir = tempfile::tempdir_in(&parent).unwrap().keep();
     let db = AppDb::open(&dir.join("app.db"), &[3; 32]).await.unwrap();
     // Never closed, as the app keeps its pools: sqlx closing connections on
     // its threads at exit races SQLCipher's exit-time shutdown, which
