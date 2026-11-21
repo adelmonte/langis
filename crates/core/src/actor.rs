@@ -1135,6 +1135,7 @@ impl Actor {
                 Command::AnswerJoinRequest { conversation, member, approve } => {
                     self.answer_join_request(conversation, member, approve).await
                 }
+                Command::BlockGroupLinkRequests { conversation, member } => self.block_group_link_requests(conversation, member).await,
                 Command::RevokeGroupInvites { conversation, invitees } => self.revoke_group_invites(conversation, invitees).await,
                 Command::CancelJoinRequest { conversation } => self.cancel_join_request(conversation).await,
                 Command::OpenGroupLink { url } => self.open_group_link(url).await,
@@ -1228,7 +1229,7 @@ impl Actor {
                 Command::DeleteCallLink { room_id } => self.delete_call_link(room_id).await,
                 Command::OpenCallLink { url } => self.open_call_link(url).await,
                 Command::ApproveCallJoin { aci, approve } => self.approve_call_join(aci, approve),
-                Command::RemoveFromCall { demux_id } => self.remove_from_call(demux_id),
+                Command::RemoveFromCall { demux_id, block } => self.remove_from_call(demux_id, block),
                 Command::Unlink => self.unlink().await,
                 // (Taken by `run` before it gets here.)
                 Command::Stop => {}

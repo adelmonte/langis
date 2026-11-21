@@ -618,6 +618,10 @@ pub enum Command {
     ChangeGroupLink { conversation: ConversationId, change: group_admin::LinkChange },
     /// Approves or turns down a request to join (an ACI).
     AnswerJoinRequest { conversation: ConversationId, member: String, approve: bool },
+    /// Bans someone (an ACI) from joining or asking to join by the link,
+    /// turning down a request they have open: the "Block request" on a
+    /// `GroupNotice::RequestBounce` (Desktop's `blockGroupLinkRequests`).
+    BlockGroupLinkRequests { conversation: ConversationId, member: String },
     /// Revokes invitations (service ids).
     RevokeGroupInvites { conversation: ConversationId, invitees: Vec<String> },
     /// Takes back our request to join a group.
@@ -756,8 +760,9 @@ pub enum Command {
     OpenCallLink { url: String },
     /// Lets someone waiting into our call link's call (their ACI), or not.
     ApproveCallJoin { aci: String, approve: bool },
-    /// Takes someone out of our call link's call.
-    RemoveFromCall { demux_id: u32 },
+    /// Takes someone out of our call link's call; `block` keeps them out
+    /// of it (RingRTC's `block_client`, Desktop's "Block from call").
+    RemoveFromCall { demux_id: u32, block: bool },
     /// Lists what can be presented; answered with `Event::ShareSources`.
     /// On Linux that's one source (`langis_calls::PORTAL_SOURCE`) when the
     /// desktop has a ScreenCast portal, and none otherwise.
@@ -1120,6 +1125,13 @@ pub struct CallParticipant {
     /// `speaker_time`). Desktop puts presenters first, then the most recent
     /// speaker, to choose who's large in speaker view.
     pub speaker_time: Option<i64>,
+    /// We have their media keys (RingRTC's `media_keys_received`). Desktop
+    /// shows "Can't receive audio and video from {name}" in their tile when
+    /// they're still missing 5 seconds after the later of their `added_at`
+    /// and our joining (`GroupCallRemoteParticipant`).
+    pub media_keys: bool,
+    /// When they joined the call, in Unix milliseconds.
+    pub added_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -543,10 +543,12 @@ fn group_update_notice(update: &proto::group_change_chat_update::Update, me: &st
             let member = required(&u.requestorAci)?;
             group(member.clone(), GroupNotice::RequestRemoved { member })
         }
-        U::GroupSequenceOfRequestsAndCancelsUpdate(u) => {
-            let member = required(&u.requestorAci)?;
-            group(member.clone(), GroupNotice::RequestRemoved { member })
-        }
+        // Desktop's `admin-approval-bounce`; a request still open follows as
+        // a `GroupJoinRequestUpdate` and merges in when stored.
+        U::GroupSequenceOfRequestsAndCancelsUpdate(u) => match required(&u.requestorAci)? {
+            Some(member) => group(Some(member.clone()), GroupNotice::RequestBounce { member, times: u.count, pending: false }),
+            None => group(None, GroupNotice::RequestRemoved { member: None }),
+        },
         U::GroupInviteLinkResetUpdate(u) => group(actor(&u.updaterAci), GroupNotice::LinkReset),
         U::GroupInviteLinkEnabledUpdate(u) => {
             group(actor(&u.updaterAci), GroupNotice::LinkOn { approval: u.linkRequiresAdminApproval })

@@ -3178,3 +3178,29 @@ async fn account_aci_is_note_to_selfs() {
     db.upsert_conversation(&ConversationId::direct("bbbb-2"), ConversationUpdate { kind: Some(ConversationKind::NoteToSelf), ..Default::default() }).await.unwrap();
     assert_eq!(db.account_aci().await.unwrap().as_deref(), Some("bbbb-2"));
 }
+
+#[tokio::test]
+async fn repeated_requests_to_join_fold_into_one_notice_as_desktop() {
+    let db = test_db().await;
+    let group = conv("g:cc");
+    let dan = || Some("dan".to_owned());
+    let requested = Notice::Group { by: dan(), change: GroupNotice::Requested { member: dan() } };
+    let canceled = Notice::Group { by: dan(), change: GroupNotice::RequestRemoved { member: dan() } };
+    let first = db.insert_notice(&group, 10, &requested).await.unwrap().unwrap();
+    // Taken back: one bounce. Asked again: still pending. Taken back: two.
+    assert_eq!(db.insert_notice(&group, 20, &canceled).await.unwrap(), Some(first));
+    assert_eq!(db.insert_notice(&group, 30, &requested).await.unwrap(), Some(first));
+    let notice = db.message(first).await.unwrap().unwrap().notice;
+    assert_eq!(notice, Some(Notice::Group { by: dan(), change: GroupNotice::RequestBounce { member: "dan".into(), times: 1, pending: true } }));
+    db.insert_notice(&group, 40, &canceled).await.unwrap();
+    let notice = db.message(first).await.unwrap().unwrap().notice;
+    assert_eq!(notice, Some(Notice::Group { by: dan(), change: GroupNotice::RequestBounce { member: "dan".into(), times: 2, pending: false } }));
+    // An admin turning them down is its own notice, as is anything after
+    // another message.
+    let denied = Notice::Group { by: Some("erin".into()), change: GroupNotice::RequestRemoved { member: dan() } };
+    db.insert_notice(&group, 50, &requested).await.unwrap();
+    assert_ne!(db.insert_notice(&group, 60, &denied).await.unwrap(), Some(first));
+    db.insert_message(&incoming("g:cc", "erin", 70, "hi")).await.unwrap();
+    assert_ne!(db.insert_notice(&group, 80, &requested).await.unwrap(), Some(first));
+    assert_eq!(db.messages(&group, None, 50).await.unwrap().len(), 4);
+}

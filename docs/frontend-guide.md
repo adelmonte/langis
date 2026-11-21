@@ -202,6 +202,15 @@ here at once and on other devices through Storage Service. A
 `Conversation` carries them back, with `blocked_at` (when it was blocked)
 and a person's profile `about`.
 
+**Repeated requests to join.** A request to join by a group's link and
+its withdrawal by the requester fold into the chat's latest notice when it
+is about the same person: `GroupNotice::RequestBounce { member, times,
+pending }` (Desktop's "requested and canceled 2 requests", followed by
+"requested to join" while `pending`). An admin's "Block request" on it is
+`Command::BlockGroupLinkRequests { conversation, member }`: they're banned
+from the link (into `group_state.banned`). Desktop shows the button to
+admins while they're neither a member nor banned.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified
@@ -290,6 +299,8 @@ meanwhile. Without ffmpeg the original goes.
 | `Command::LoadCallDevices`, `SetCallDevice`, `SetShareQuality` | `Event::CallDevices` |
 | `Command::PeekGroupCall { conversation }` (the lobby) | `Event::GroupPeek { users, max_devices }`: who's in it; with `users.len()` at `max_devices` the call is full |
 | `Command::SetOutgoingRing(on)` (the lobby's Ring toggle) | A group call we start then rings the group (16 or fewer) or only notifies it |
+| `Command::PeekGroupCall` with a call link's `ConversationId` | `Event::GroupPeek` for the link's call: who's in it now, e.g. for the link's details |
+| `Command::RemoveFromCall { demux_id, block }` (a call link we administer) | They leave the call's `participants`; with `block` they can't come back to this call |
 
 An incoming call arrives as `Event::Call(Some(update))` with
 `update.incoming` set: ring.
@@ -298,6 +309,9 @@ In a group call, `update.participants` lists the others, one entry per
 device. Each has `video`, `audio` and `presenting`, and `speaker_time`
 (when they were last the main speaker, Unix milliseconds) for ordering
 tiles as Desktop does: presenters first, then the most recent speaker.
+`media_keys` is false while we lack their media keys, so can't decrypt
+them; Desktop's tile says "Can't receive audio and video from {name}" once
+that has lasted 5 seconds past the later of their `added_at` and our join.
 
 Video doesn't go through events. `backend.call_video()` holds the latest
 frames: `remote`, `local` (your camera, mirrored) and `group` (one per

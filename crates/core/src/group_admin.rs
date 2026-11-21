@@ -199,6 +199,25 @@ pub fn deny_request(
     Ok(())
 }
 
+/// Desktop's `buildAddBannedMemberChange` (its timeline's "Block request"):
+/// bans someone from joining or asking to join by the link, turning down
+/// a request they have open. Not a member, and not us.
+pub fn block_requests(secret: &GroupSecretParams, group: &Group, me: Aci, target: Aci, limit: usize, actions: &mut Actions) -> anyhow::Result<()> {
+    if target == me || is_member(group, target) {
+        bail!("they're in the group");
+    }
+    if group.members_banned.iter().any(|b| b.user_id == ServiceId::from(target)) {
+        bail!("their requests are already blocked");
+    }
+    if is_requesting(group, target) {
+        actions
+            .delete_members_pending_admin_approval
+            .push(action::DeleteMemberPendingAdminApprovalAction { deleted_user_id: encrypt_id(secret, target.into()) });
+    }
+    ban(secret, group, me, target.into(), limit, actions);
+    Ok(())
+}
+
 /// Desktop's `buildPromotePendingAdminApprovalMemberChange`: lets them in.
 pub fn approve_request(secret: &GroupSecretParams, group: &Group, target: Aci, actions: &mut Actions) -> anyhow::Result<()> {
     if !is_requesting(group, target) {
@@ -549,6 +568,21 @@ mod tests {
         let mut actions = Actions::default();
         change_link(&had, LinkChange::Off, password, &mut actions);
         assert!(matches!(decrypt(aci(1), actions)[..], [GroupChange::InviteLinkAccess(AccessRequired::Unsatisfiable)]));
+    }
+
+    #[test]
+    fn blocking_requests_bans_and_turns_down_an_open_one() {
+        let secret = secret_params([9; 32]);
+        let mut actions = Actions::default();
+        block_requests(&secret, &group(), aci(1), aci(5), 1000, &mut actions).unwrap();
+        assert_eq!((actions.delete_members_pending_admin_approval.len(), actions.add_members_banned.len()), (1, 1));
+        let mut actions = Actions::default();
+        block_requests(&secret, &group(), aci(1), aci(8), 1000, &mut actions).unwrap();
+        assert_eq!((actions.delete_members_pending_admin_approval.len(), actions.add_members_banned.len()), (0, 1));
+        // Members, us and those already banned aren't.
+        assert!(block_requests(&secret, &group(), aci(1), aci(2), 1000, &mut actions).is_err());
+        assert!(block_requests(&secret, &group(), aci(1), aci(1), 1000, &mut actions).is_err());
+        assert!(block_requests(&secret, &group(), aci(1), aci(6), 1000, &mut actions).is_err());
     }
 
     #[test]

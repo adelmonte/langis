@@ -880,12 +880,44 @@ pub enum GroupNotice {
     Requested { member: Option<String> },
     /// `member`'s request was denied or withdrawn (`admin-approval-remove-one`).
     RequestRemoved { member: Option<String> },
+    /// `member` asked to join by the link and took it back, `times` times
+    /// in a row (Desktop's `admin-approval-bounce`); `pending` while their
+    /// latest request is still open. Merged from `Requested` and
+    /// `RequestRemoved` as they come (see [`merge_request_bounce`]).
+    RequestBounce { member: String, times: u32, pending: bool },
     /// The group link was turned on (`group-link-add`).
     LinkOn { approval: bool },
     LinkOff,
     LinkReset,
     /// Admin approval for the link changed (`access-invite-link`).
     LinkApproval { on: bool },
+}
+
+/// Desktop's `_mergeGroupChangeMessages` (`ts/groups.preload.ts`): a
+/// request to join, or its withdrawal by the requester, right after
+/// `first` (the chat's latest message) about the same person folds into
+/// one "requested and canceled" notice. `None` when they don't merge.
+pub fn merge_request_bounce(first: &Notice, second: &Notice) -> Option<Notice> {
+    let Notice::Group { by: first_by, change: first } = first else { return None };
+    let (member, pending) = match second {
+        Notice::Group { change: GroupNotice::Requested { member: Some(m) }, .. } => (m, true),
+        Notice::Group { by: Some(by), change: GroupNotice::RequestRemoved { member: Some(m) } }
+            if by == m || by == UNKNOWN_ACTOR =>
+        {
+            (m, false)
+        }
+        _ => return None,
+    };
+    let change = match first {
+        GroupNotice::Requested { member: Some(m) } if m == member && !pending => {
+            GroupNotice::RequestBounce { member: m.clone(), times: 1, pending: false }
+        }
+        GroupNotice::RequestBounce { member: m, times, pending: was } if m == member && *was != pending => {
+            GroupNotice::RequestBounce { member: m.clone(), times: times + u32::from(!pending), pending }
+        }
+        _ => return None,
+    };
+    Some(Notice::Group { by: first_by.clone(), change })
 }
 
 impl Conversation {
@@ -3014,6 +3046,29 @@ impl AppDb {
     async fn add_notice(&self, conversation: &ConversationId, at: i64, notice: &Notice, unread: bool) -> Result<Option<i64>> {
         let mut tx = self.write().await?;
         ensure_conversation(&mut tx, conversation).await?;
+        // A request to join or its withdrawal may fold into the chat's
+        // latest notice (Desktop's "requested and canceled").
+        if matches!(notice, Notice::Group { change: GroupNotice::Requested { .. } | GroupNotice::RequestRemoved { .. }, .. }) {
+            let last: Option<(i64, i64, Option<String>)> = sqlx::query_as(
+                "SELECT id, sent_at, notice FROM messages WHERE conversation_id = ? ORDER BY sent_at DESC, id DESC LIMIT 1",
+            )
+            .bind(&conversation.0)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let merged = last.filter(|(_, sent_at, _)| *sent_at <= at).and_then(|(id, _, first)| {
+                let first: Notice = serde_json::from_str(first.as_deref()?).ok()?;
+                Some((id, merge_request_bounce(&first, notice)?))
+            });
+            if let Some((id, merged)) = merged {
+                sqlx::query("UPDATE messages SET notice = ? WHERE id = ?")
+                    .bind(serde_json::to_string(&merged)?)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                return Ok(Some(id));
+            }
+        }
         let id = sqlx::query_scalar(
             "INSERT INTO messages (conversation_id, sent_at, received_at, direction, author_key, body, status, \
                 attachments, is_read, notice) \
