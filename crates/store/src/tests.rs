@@ -2944,6 +2944,10 @@ async fn sealed_sender_is_kept_per_message() {
     assert!(db.message(id).await.unwrap().unwrap().sealed_sender.is_empty());
     db.set_sealed_sender(id, &["alice".to_owned()]).await.unwrap();
     assert_eq!(db.message(id).await.unwrap().unwrap().sealed_sender, ["alice"]);
+    // A later send's adds to the list, once each.
+    db.add_sealed_sender(id, &["bob".to_owned(), "alice".to_owned()]).await.unwrap();
+    assert_eq!(db.message(id).await.unwrap().unwrap().sealed_sender, ["alice", "bob"]);
+    db.add_sealed_sender(-1, &["bob".to_owned()]).await.unwrap();
 }
 
 #[tokio::test]

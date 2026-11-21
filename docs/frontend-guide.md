@@ -219,6 +219,14 @@ replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test
 for leaving them out of the people offered for a new chat or group.
 
+**Message details.** `db.send_states(id)` gives each recipient's status
+for Desktop's `MessageDetail`. `Message::sealed_sender` lists who it went
+to by sealed sender (our sends from here and from other devices, Desktop's
+`unidentifiedDeliveries`), or holds the author when an incoming message
+came sealed (`unidentifiedDeliveryReceived`). Desktop shows its
+unidentified-delivery icon on those rows only while the account setting
+`AccountSetting::SealedSenderIndicators` is on.
+
 **Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
 a contact row (`removeContact`): their chat's `removal_stage` becomes
 `JustNotification`, our profile is no longer shared with them, the chat

@@ -293,6 +293,9 @@ struct Delivery {
     identity: Vec<String>,
     /// The server wants a captcha before more sends (HTTP 428): its token.
     challenge: Option<String>,
+    /// Of `reached`, those it went to by sealed sender (Desktop's
+    /// `unidentifiedDeliveries`).
+    sealed: Vec<String>,
 }
 
 /// Why a send to someone failed.
@@ -366,9 +369,15 @@ impl Delivery {
         }
     }
 
-    fn record(&mut self, recipient: String, result: Result<(), SendFailure>) {
+    /// One recipient's result: `Ok(sealed)` when it reached them.
+    fn record(&mut self, recipient: String, result: Result<bool, SendFailure>) {
         match result {
-            Ok(()) => self.reached.push(recipient),
+            Ok(sealed) => {
+                if sealed {
+                    self.sealed.push(recipient.clone());
+                }
+                self.reached.push(recipient)
+            }
             Err(failure) if failure.unregistered => self.unregistered.push(recipient),
             Err(failure) => {
                 self.note(&failure);
@@ -5441,6 +5450,9 @@ impl Actor {
     async fn record_delivery(&self, conversation: &ConversationId, id: i64, delivery: &Delivery) -> DeliveryStatus {
         let status = self.report(conversation, delivery);
         let summary = self.record_send_states(conversation, id, delivery).await.unwrap_or(status);
+        if let Err(error) = self.db.add_sealed_sender(id, &delivery.sealed).await {
+            warn!(%error, "couldn't keep who a message went to by sealed sender");
+        }
         // The server wants a captcha first: held until it's solved.
         match &delivery.challenge {
             Some(token) => self.hold_for_challenge(conversation, id, token).await,
@@ -5543,7 +5555,7 @@ impl Actor {
                 if only.is_some_and(|only| !only.contains(&id)) {
                     return delivery;
                 }
-                let result = manager.send_message(recipient, body, timestamp).await;
+                let result = manager.send_message_sealed(recipient, body, timestamp).await;
                 delivery.record(id, result.map_err(SendFailure::from));
             }
             (None, None) => return failed(format!("invalid conversation {conversation}")),

@@ -3245,6 +3245,36 @@ impl AppDb {
         Ok(())
     }
 
+    /// Adds to who our message `message_id` went to by sealed sender, as
+    /// Desktop's `handleMessageSend` adds each send's
+    /// `unidentifiedDeliveries` to the message's: a retry to the ones an
+    /// earlier send missed keeps those it reached before.
+    pub async fn add_sealed_sender(&self, message_id: i64, service_ids: &[String]) -> Result<()> {
+        if service_ids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.write().await?;
+        let old: Option<Option<String>> =
+            sqlx::query_scalar("SELECT sealed_sender FROM messages WHERE id = ?").bind(message_id).fetch_optional(&mut *tx).await?;
+        let Some(old) = old else { return Ok(()) };
+        let mut list: Vec<String> = old.as_deref().and_then(|json| serde_json::from_str(json).ok()).unwrap_or_default();
+        let before = list.len();
+        for id in service_ids {
+            if !list.contains(id) {
+                list.push(id.clone());
+            }
+        }
+        if list.len() != before {
+            sqlx::query("UPDATE messages SET sealed_sender = ? WHERE id = ?")
+                .bind(serde_json::to_string(&list)?)
+                .bind(message_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn set_mentions(&self, message_id: i64, mentions: &[MentionSpan]) -> Result<()> {
         let json = (!mentions.is_empty()).then(|| serde_json::to_string(mentions)).transpose()?;
         sqlx::query("UPDATE messages SET mentions = ? WHERE id = ?").bind(json).bind(message_id).execute(&self.writer).await?;

@@ -83,6 +83,9 @@ pub struct GroupSendSummary {
     pub fell_over: Option<String>,
     /// Each recipient's result, those sent to one by one included.
     pub results: Vec<(ServiceId, Result<(), MessageSenderError>)>,
+    /// langis: of those reached, the ones it went to by sealed sender
+    /// (`SentMessage::unidentified`, Desktop's `unidentifiedDeliveries`).
+    pub sealed: Vec<ServiceId>,
 }
 use crate::serde::serde_profile_key;
 use crate::store::{ContentsStore, Sticker, StickerPack, StickerPackManifest, Store, Thread};
@@ -1233,6 +1236,18 @@ impl<S: Store> Manager<S, Registered> {
         message: impl Into<ContentBody>,
         timestamp: u64,
     ) -> Result<(), Error<S::Error>> {
+        self.send_message_sealed(recipient, message, timestamp).await.map(|_| ())
+    }
+
+    /// langis: [`Self::send_message`], saying whether it went by sealed
+    /// sender (libsignal-service's `SentMessage::unidentified`, Desktop's
+    /// `unidentifiedDeliveries`).
+    pub async fn send_message_sealed(
+        &mut self,
+        recipient: impl Into<ServiceId>,
+        message: impl Into<ContentBody>,
+        timestamp: u64,
+    ) -> Result<bool, Error<S::Error>> {
         let mut sender = self.new_message_sender().await?;
         let recipient = recipient.into();
 
@@ -1270,7 +1285,7 @@ impl<S: Store> Manager<S, Registered> {
 
         ensure_data_message_timestamp(&mut content_body, timestamp);
 
-        sender
+        let sent = sender
             .send_message(
                 &recipient,
                 unidentified_access.as_ref(),
@@ -1308,7 +1323,7 @@ impl<S: Store> Manager<S, Registered> {
         )
         .await?;
 
-        Ok(())
+        Ok(sent.unidentified)
     }
 
     /// Uploads one attachment prior to linking them in a message.
@@ -1533,6 +1548,11 @@ impl<S: Store> Manager<S, Registered> {
             .filter(|(_, r)| matches!(r, Err(MessageSenderError::NotFound { .. })))
             .count();
 
+        summary.sealed = results
+            .iter()
+            .filter(|(_, r)| matches!(r, Ok(sent) if sent.unidentified))
+            .map(|(recipient, _)| *recipient)
+            .collect();
         summary.results = results
             .into_iter()
             .map(|(recipient, result)| (recipient, result.map(|_| ())))
