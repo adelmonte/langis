@@ -2725,6 +2725,8 @@ impl Actor {
         let manager = manager.clone();
         tokio::task::spawn_local(async move {
             this.sync_storage(&manager).await;
+            // After the sync, as Desktop runs it on the storage queue.
+            this.check_username_integrity(&manager).await;
             this.backfill_author_names().await;
             this.sync_avatars(manager).await;
         });

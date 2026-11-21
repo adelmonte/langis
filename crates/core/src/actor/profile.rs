@@ -147,6 +147,10 @@ impl Actor {
         let old_link = self.db.setting(SETTING_USERNAME_LINK).await.ok().flatten();
         if link != old_link {
             changed = true;
+            // Desktop's `mergeAccountRecord`: another device's new link.
+            if link.is_some() {
+                self.clear_corrupted(false, true).await;
+            }
             let _ = match &link {
                 Some(link) => self.db.set_setting(SETTING_USERNAME_LINK, link).await,
                 None => self.db.remove_setting(SETTING_USERNAME_LINK).await,
@@ -380,6 +384,68 @@ impl Actor {
         }
     }
 
+    /// Desktop's `usernameIntegrity` (`ts/services/usernameIntegrity`): at
+    /// most daily, compares our username and link with the server's
+    /// whoami and flags either that no longer matches.
+    pub(super) async fn check_username_integrity(&self, manager: &SignalManager) {
+        const DAY: i64 = 24 * 60 * 60 * 1000;
+        let now = now_millis();
+        let last = self.db.setting(usernames::SETTING_INTEGRITY_CHECKED).await.ok().flatten().and_then(|v| v.parse::<i64>().ok());
+        if last.is_some_and(|last| last <= now && now - last < DAY) {
+            return;
+        }
+        let Some(username) = self.our_username().await else {
+            let _ = self.db.set_setting(usernames::SETTING_INTEGRITY_CHECKED, &now.to_string()).await;
+            return;
+        };
+        let whoami = match manager.whoami().await {
+            Ok(whoami) => whoami,
+            Err(error) => return warn!(%error, "couldn't check our username"),
+        };
+        let link = self.our_username_link().await;
+        let (username_bad, link_bad) =
+            usernames::integrity(&username, link.as_ref(), whoami.username_hash.as_deref(), whoami.username_link_handle);
+        let mut changed = false;
+        if username_bad {
+            warn!("the server's username isn't ours");
+            changed |= self.set_corrupted(usernames::SETTING_USERNAME_CORRUPTED, true).await;
+        }
+        if link_bad {
+            warn!("the server's username link isn't ours");
+            changed |= self.set_corrupted(usernames::SETTING_USERNAME_LINK_CORRUPTED, true).await;
+        }
+        let _ = self.db.set_setting(usernames::SETTING_INTEGRITY_CHECKED, &now.to_string()).await;
+        if changed {
+            self.emit(Event::OwnProfileChanged);
+        }
+    }
+
+    /// Sets or clears one of the corruption flags; true when it changed.
+    async fn set_corrupted(&self, key: &str, on: bool) -> bool {
+        let was = self.db.setting(key).await.ok().flatten().is_some_and(|v| v == "1");
+        if was == on {
+            return false;
+        }
+        let _ = if on { self.db.set_setting(key, "1").await } else { self.db.remove_setting(key).await };
+        true
+    }
+
+    /// Clears the flags a fix answers (Desktop's `confirmUsername`,
+    /// `deleteUsername`, `resetLink`, and a username or link from another
+    /// device).
+    pub(super) async fn clear_corrupted(&self, username: bool, link: bool) {
+        let mut changed = false;
+        if username {
+            changed |= self.set_corrupted(usernames::SETTING_USERNAME_CORRUPTED, false).await;
+        }
+        if link {
+            changed |= self.set_corrupted(usernames::SETTING_USERNAME_LINK_CORRUPTED, false).await;
+        }
+        if changed {
+            self.emit(Event::OwnProfileChanged);
+        }
+    }
+
     async fn our_username(&self) -> Option<String> {
         self.db.setting(crate::key_transparency::SETTING_USERNAME).await.ok().flatten().filter(|u| !u.is_empty())
     }
@@ -439,6 +505,7 @@ impl Actor {
             let previous_link = self.our_username_link().await;
             let link = usernames::confirm(&manager, &reservation, previous_link.as_ref()).await?;
             self.save_username(Some(&reservation.username), Some(&link)).await;
+            self.clear_corrupted(true, true).await;
             self.write_own_record(
                 &manager,
                 &[AccountFieldEdit::Username(Some(reservation.username.clone())), AccountFieldEdit::UsernameLink(Some(link))],
@@ -461,6 +528,7 @@ impl Actor {
                 UsernameProblem::General
             })?;
             self.save_username(None, None).await;
+            self.clear_corrupted(true, false).await;
             self.write_own_record(&manager, &[AccountFieldEdit::Username(None), AccountFieldEdit::UsernameLink(None)]).await;
             self.local_profile_written();
             Ok(None)
@@ -484,6 +552,7 @@ impl Actor {
             })?;
             let link = UsernameLink { entropy: entropy.to_vec(), server_id, color };
             self.save_username(Some(&username), Some(&link)).await;
+            self.clear_corrupted(false, true).await;
             self.write_own_record(&manager, &[AccountFieldEdit::UsernameLink(Some(link))]).await;
             anyhow::Ok(())
         }

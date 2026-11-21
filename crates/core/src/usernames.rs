@@ -16,6 +16,30 @@ use usernames::{NicknameLimits, Username, UsernameError};
 
 use crate::actor::SignalManager;
 
+/// Settings keys, "1" while set: the server no longer has our username, or
+/// our link (Desktop's `usernameCorrupted` and `usernameLinkCorrupted`
+/// items). [`crate::OwnProfile`] reads them.
+pub(crate) const SETTING_USERNAME_CORRUPTED: &str = "account.username_corrupted";
+pub(crate) const SETTING_USERNAME_LINK_CORRUPTED: &str = "account.username_link_corrupted";
+/// Settings key: when the integrity check last ran (Unix millis).
+pub(crate) const SETTING_INTEGRITY_CHECKED: &str = "account.username_checked_at";
+
+/// Desktop's `usernameIntegrity` `checkUsername`: whether our username
+/// (`.0`) and our link (`.1`) still match what the server's whoami has.
+/// A username that doesn't parse can't match. Without a link only the
+/// username is checked.
+pub(crate) fn integrity(
+    username: &str,
+    link: Option<&UsernameLink>,
+    remote_hash: Option<&[u8]>,
+    remote_link: Option<presage::libsignal_service::prelude::Uuid>,
+) -> (bool, bool) {
+    let hash = Username::new(username).ok().map(|u| u.hash());
+    let username_bad = hash.is_none() || remote_hash != hash.as_ref().map(|h| h.as_slice());
+    let link_bad = link.is_some_and(|l| presage::libsignal_service::prelude::Uuid::from_slice(&l.server_id).ok() != remote_link);
+    (username_bad, link_bad)
+}
+
 /// Settings key: our username link, `{entropy, server_id, color}` as JSON
 /// (Desktop's `usernameLink` and `usernameLinkColor` items).
 pub(crate) const SETTING_USERNAME_LINK: &str = "account.username_link";
@@ -506,6 +530,19 @@ mod tests {
         let json = serde_json::to_string(&link).unwrap();
         assert_eq!(serde_json::from_str::<UsernameLink>(&json).unwrap(), link);
         assert_eq!(UsernameLink { server_id: vec![1], ..link }.url(), None);
+    }
+
+    #[test]
+    fn integrity_compares_with_whoami() {
+        use presage::libsignal_service::prelude::Uuid;
+        let hash = Username::new("trail_mix.42").unwrap().hash();
+        let handle = Uuid::from_u128(7);
+        let link = UsernameLink { entropy: vec![1; 32], server_id: handle.as_bytes().to_vec(), color: 0 };
+        assert_eq!(integrity("trail_mix.42", Some(&link), Some(&hash), Some(handle)), (false, false));
+        assert_eq!(integrity("trail_mix.42", None, Some(&hash), None), (false, false));
+        assert_eq!(integrity("trail_mix.42", Some(&link), None, Some(handle)), (true, false));
+        assert_eq!(integrity("trail_mix.43", Some(&link), Some(&hash), None), (true, true));
+        assert_eq!(integrity("x", None, Some(&hash), None), (true, false));
     }
 
     #[test]

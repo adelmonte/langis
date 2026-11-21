@@ -212,6 +212,14 @@ if anyone is listed (or a send failed that way), show who and offer
 "Send anyway". That's `Command::SetVerified { conversation, verified: false }`
 for each of them, then `Command::RetrySend` for a failed message.
 
+**Username problems.** Once a day, after the Storage Service sync, the
+core compares our username and username link with the server's (Desktop's
+`usernameIntegrity`). `OwnProfile::username_corrupted` and
+`username_link_corrupted` (from `own_profile`, re-read on
+`Event::OwnProfileChanged`) say one no longer matches; show Desktop's
+left-pane banner with "Fix now". Setting the username again
+(`ConfirmUsername`), deleting it, or `ResetUsernameLink` clears them.
+
 **Links in messages.** Draw a link as a link only when it's `http`,
 `https` or `mailto` and `langis_core::link_preview::is_link_sneaky(href)`
 is false (Desktop's `Linkify`); a sneaky one (credentials in it, an IP

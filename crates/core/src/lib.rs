@@ -1431,6 +1431,11 @@ pub struct OwnProfile {
     pub username_link: Option<usernames::UsernameLink>,
     /// Our profile's badges, visible or not.
     pub badges: Vec<langis_store::ProfileBadge>,
+    /// The server no longer has our username, or our link (Desktop's
+    /// `usernameCorrupted`, `usernameLinkCorrupted`): its left-pane banner
+    /// offers to set it again.
+    pub username_corrupted: bool,
+    pub username_link_corrupted: bool,
 }
 
 impl OwnProfile {
@@ -1459,7 +1464,13 @@ pub async fn own_profile(db: &AppDb, aci: &str) -> OwnProfile {
         .flatten()
         .and_then(|json| serde_json::from_str(&json).ok())
         .filter(|_| username.is_some());
+    let flag = |v: Option<String>| v.is_some_and(|v| v == "1");
+    let username_corrupted = username.is_some() && flag(db.setting(usernames::SETTING_USERNAME_CORRUPTED).await.ok().flatten());
+    let username_link_corrupted =
+        username_link.is_some() && flag(db.setting(usernames::SETTING_USERNAME_LINK_CORRUPTED).await.ok().flatten());
     OwnProfile {
+        username_corrupted,
+        username_link_corrupted,
         given_name: profile.given_name,
         family_name: profile.family_name,
         about: profile.about,
