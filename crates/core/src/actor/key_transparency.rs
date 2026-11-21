@@ -297,6 +297,10 @@ impl Actor {
         if username_changed && let Err(error) = self.db.set_setting(kt::SETTING_USERNAME, &username).await {
             warn!(%error, "failed to save our username");
         }
+        // Desktop's `updateUsername` for us: a new one clears the flag.
+        if username_changed && !username.is_empty() {
+            self.clear_corrupted(true, false).await;
+        }
         let discoverable = if account.unlisted_phone_number { "false" } else { "true" };
         let old_discoverable = self.db.setting(kt::SETTING_E164_DISCOVERABLE).await.ok().flatten();
         if old_discoverable.as_deref() != Some(discoverable)

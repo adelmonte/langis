@@ -927,6 +927,54 @@ async fn clearing_forgets_the_whole_account() {
 }
 
 #[tokio::test]
+async fn registration_is_kept_per_person() {
+    let db = test_db().await;
+    db.insert_message(&incoming("d:a", "a", 1, "hi")).await.unwrap();
+    let now = 10 * 3600 * 1000;
+    assert!(db.set_registration(&[], &[("a".into(), now), ("nobody".into(), now)]).await.unwrap());
+    let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
+    assert_eq!(c.unregistered_at, Some(now));
+    assert!(c.ever_unregistered() && c.unregistered(now + 1));
+    // After six hours they're offered again, but the composer still says so.
+    assert!(!c.unregistered(now + 6 * 3600 * 1000) && c.ever_unregistered());
+    // An older finding doesn't move it back.
+    assert!(!db.set_registration(&[], &[("a".into(), now - 1)]).await.unwrap());
+    assert!(db.set_registration(&["a".into()], &[]).await.unwrap());
+    assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().unregistered_at.is_none());
+    assert!(!db.set_registration(&["a".into()], &[]).await.unwrap());
+}
+
+#[tokio::test]
+async fn removed_contacts_as_desktop_stages_them() {
+    let db = test_db().await;
+    db.insert_message(&incoming("d:a", "a", 1, "hi")).await.unwrap();
+    db.set_message_request(&conv("d:a"), MessageRequestResponse::Accept).await.unwrap();
+    assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().accepted);
+    assert!(db.remove_contact(&conv("d:a")).await.unwrap());
+    assert!(!db.remove_contact(&conv("d:a")).await.unwrap());
+    let notice = db.insert_notice(&conv("d:a"), 2, &Notice::ContactRemoved).await.unwrap().unwrap();
+    let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
+    assert_eq!(c.removal_stage, Some(RemovalStage::JustNotification));
+    assert!(!c.accepted);
+    // Their next message makes it a request again, and the notice goes.
+    assert_eq!(db.contact_messaged(&conv("d:a")).await.unwrap(), Some(vec![notice]));
+    assert_eq!(db.contact_messaged(&conv("d:a")).await.unwrap(), None);
+    assert_eq!(db.conversation(&conv("d:a")).await.unwrap().unwrap().removal_stage, Some(RemovalStage::MessageRequest));
+    assert_eq!(db.restore_contact(&conv("d:a")).await.unwrap(), Some(vec![]));
+    assert_eq!(db.restore_contact(&conv("d:a")).await.unwrap(), None);
+    let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
+    assert!(c.removal_stage.is_none() && c.accepted);
+    // Storage Service's `hidden`, both ways.
+    assert!(db.apply_removed(&[("a".into(), true), ("nobody".into(), true)]).await.unwrap());
+    assert!(!db.apply_removed(&[("a".into(), true)]).await.unwrap());
+    assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().removal_stage.is_some());
+    assert!(db.apply_removed(&[("a".into(), false)]).await.unwrap());
+    assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().removal_stage.is_none());
+    // Not for groups.
+    assert!(!db.remove_contact(&conv("g:00")).await.unwrap());
+}
+
+#[tokio::test]
 async fn marked_unread_and_blocked_flags() {
     let db = test_db().await;
     db.insert_message(&incoming("d:a", "a", 1, "hi")).await.unwrap();
@@ -1183,7 +1231,7 @@ async fn drop_later_migrations(db: &AppDb) {
     sqlx::query("ALTER TABLE messages DROP COLUMN content").execute(&db.writer).await.unwrap();
     sqlx::query("DROP TABLE sticker_packs").execute(&db.writer).await.unwrap();
     sqlx::query("ALTER TABLE messages DROP COLUMN edit_history").execute(&db.writer).await.unwrap();
-    for column in ["dont_notify_mentions", "blocked_at"] {
+    for column in ["dont_notify_mentions", "blocked_at", "unregistered_at", "removal_stage"] {
         sqlx::query(AssertSqlSafe(format!("ALTER TABLE conversations DROP COLUMN {column}"))).execute(&db.writer).await.unwrap();
     }
     sqlx::query("DROP TABLE notification_profiles").execute(&db.writer).await.unwrap();

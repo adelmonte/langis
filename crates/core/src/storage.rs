@@ -64,6 +64,11 @@ pub(crate) struct StorageContact {
     pub system_name: bool,
     /// Their username (Desktop's `contactRecord.username`).
     pub username: Option<String>,
+    /// When they were found unregistered (`unregisteredAtTimestamp`),
+    /// Unix millis.
+    pub unregistered_at: Option<i64>,
+    /// We removed them (`hidden`, Desktop's `removalStage`).
+    pub removed: bool,
 }
 
 /// What we read from the Storage Service.
@@ -499,6 +504,9 @@ pub(crate) enum ChatEdit {
     StorySendMode(langis_store::StorySendMode),
     /// A group's `dontNotifyForMentionsIfMuted`; contact records have none.
     DontNotifyMentions(bool),
+    /// A person removed (`hidden`, Desktop's `removalStage`); groups have
+    /// none.
+    Hidden(bool),
 }
 
 impl ChatEdit {
@@ -514,7 +522,11 @@ impl ChatEdit {
             ChatEdit::ProfileSharing(on) => (Some(10), 3, u64::from(on)),
             ChatEdit::StorySendMode(mode) => (None, 10, mode.to_wire() as u64),
             ChatEdit::DontNotifyMentions(on) => (None, 7, u64::from(on)),
+            ChatEdit::Hidden(on) => (Some(20), 0, u64::from(on)),
         };
+        if group && matches!(self, ChatEdit::Hidden(_)) {
+            return None;
+        }
         Some((if group { group_field } else { contact? }, value))
     }
 }
@@ -1736,6 +1748,8 @@ pub(crate) fn from_record(record: &ContactRecord) -> Option<StorageContact> {
             .any(|n| !n.trim().is_empty()),
         nickname,
         username: Some(record.username.trim().to_owned()).filter(|u| !u.is_empty()),
+        unregistered_at: (record.unregistered_at_timestamp != 0).then(|| clamp_millis(record.unregistered_at_timestamp)),
+        removed: record.hidden,
     })
 }
 

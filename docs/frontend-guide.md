@@ -211,6 +211,25 @@ pending }` (Desktop's "requested and canceled 2 requests", followed by
 from the link (into `group_state.banned`). Desktop shows the button to
 admins while they're neither a member nor banned.
 
+**No longer on Signal.** A send that finds someone unregistered (the
+server's 404) sets their chat's `unregistered_at`, as Desktop's
+`discoveredUnregisteredAt`; a send that reaches them, or a message from
+them, clears it. `Conversation::ever_unregistered()` is Desktop's test for
+replacing the composer with "This person isn't using Signal" and hiding the
+call buttons; `unregistered(now)` (found in the last six hours) is its test
+for leaving them out of the people offered for a new chat or group.
+
+**Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
+a contact row (`removeContact`): their chat's `removal_stage` becomes
+`JustNotification`, our profile is no longer shared with them, the chat
+gets a `Notice::ContactRemoved`, and Storage Service's `hidden` is set.
+Leave them out of the people offered for a new chat. The chat isn't
+`accepted` while removed, but with `JustNotification` it keeps its composer
+(Desktop shows message request actions only for `MessageRequest`, which it
+becomes when they message us, worded "You have removed this person in the
+past"). Accepting, sending them a message or `Removed(false)` restores
+them.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified
@@ -222,6 +241,14 @@ Your part is the prompt. Before a send, call
 if anyone is listed (or a send failed that way), show who and offer
 "Send anyway". That's `Command::SetVerified { conversation, verified: false }`
 for each of them, then `Command::RetrySend` for a failed message.
+
+**Username problems.** Once a day, after the Storage Service sync, the
+core compares our username and username link with the server's (Desktop's
+`usernameIntegrity`). `OwnProfile::username_corrupted` and
+`username_link_corrupted` (from `own_profile`, re-read on
+`Event::OwnProfileChanged`) say one no longer matches; show Desktop's
+left-pane banner with "Fix now". Setting the username again
+(`ConfirmUsername`), deleting it, or `ResetUsernameLink` clears them.
 
 **Links in messages.** Draw a link as a link only when it's `http`,
 `https` or `mailto` and `langis_core::link_preview::is_link_sneaky(href)`

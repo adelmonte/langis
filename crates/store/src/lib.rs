@@ -164,6 +164,23 @@ pub struct Conversation {
     /// A person's profile About, its emoji first (Desktop's `about` and
     /// `aboutEmoji`), when their profile has one.
     pub about: Option<String>,
+    /// Unix millis a send last found them no longer registered (Desktop's
+    /// `discoveredUnregisteredAt`); `None` once they're seen again.
+    pub unregistered_at: Option<i64>,
+    /// We removed them (Desktop's `removalStage`); `None` when not.
+    pub removal_stage: Option<RemovalStage>,
+}
+
+/// Desktop's `removalStage`: a person removed from our contacts ("Remove"
+/// on their contact row, or `hidden` in their Storage Service record).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RemovalStage {
+    /// Removed; their chat stays as it was (`justNotification`).
+    JustNotification,
+    /// They messaged us since: the chat is a message request again
+    /// (`messageRequest`), with Desktop's "You have removed this person in
+    /// the past" wording.
+    MessageRequest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -827,6 +844,9 @@ pub enum Notice {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         who: Option<String>,
     },
+    /// Desktop's `contact-removed-notification`: we removed this person;
+    /// it goes when they're restored or message us.
+    ContactRemoved,
     /// Desktop's `verified-change`: we marked our safety number with `who`
     /// verified (or not), here (`local`) or on another device.
     Verified { who: String, verified: bool, local: bool },
@@ -934,6 +954,21 @@ impl Conversation {
             Membership::Invited { by: Some(by) } => Some(by),
             _ => self.added_by.as_deref(),
         }
+    }
+
+    /// Ever found unregistered and not seen since (Desktop's
+    /// `isConversationEverUnregistered`): the composer gives way to "This
+    /// person isn't using Signal" and the call buttons go.
+    pub fn ever_unregistered(&self) -> bool {
+        self.kind == ConversationKind::Direct && self.unregistered_at.is_some()
+    }
+
+    /// Found unregistered in the last six hours (Desktop's
+    /// `isConversationUnregistered`): left out of the people offered for a
+    /// new chat or group.
+    pub fn unregistered(&self, now_millis: i64) -> bool {
+        const SIX_HOURS: i64 = 6 * 3600 * 1000;
+        self.ever_unregistered() && self.unregistered_at.is_some_and(|at| now_millis - at < SIX_HOURS)
     }
 }
 
@@ -1228,10 +1263,10 @@ const CONVERSATION_COLUMNS: &str = "id, kind, title, phone, color, members, last
       WHERE m.conversation_id = conversations.id AND m.unread_poll_votes = 1) AS unread_poll_votes, \
      message_request, reported, added_by, \
      EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = substr(conversations.id, 3)) AS system_contact, \
-     dont_notify_mentions, blocked_at, \
+     dont_notify_mentions, blocked_at, unregistered_at, removal_stage, \
      (SELECT TRIM(p.about_emoji || ' ' || p.about) FROM profiles p \
       WHERE p.service_id = substr(conversations.id, 3) AND conversations.kind = 'direct') AS about, \
-     (kind = 'note_to_self' OR id = 'd:11111111-1111-4111-8111-111111111111' OR message_request = 1 \
+     (removal_stage IS NULL AND (kind = 'note_to_self' OR id = 'd:11111111-1111-4111-8111-111111111111' OR message_request = 1 \
       OR EXISTS (SELECT 1 FROM profile_sharing p WHERE p.id = conversations.id) \
       OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.author_key = '' AND m.notice IS NULL) \
       OR (kind = 'direct' AND (EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = substr(conversations.id, 3)) \
@@ -1240,7 +1275,7 @@ const CONVERSATION_COLUMNS: &str = "id, kind, title, phone, color, members, last
       OR (kind = 'group' AND COALESCE(json_extract(group_state, '$.membership.kind'), 'member') = 'member' \
           AND added_by IS NOT NULL \
           AND (EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = conversations.added_by) \
-               OR EXISTS (SELECT 1 FROM profile_sharing p WHERE p.id = 'd:' || conversations.added_by)))) AS accepted";
+               OR EXISTS (SELECT 1 FROM profile_sharing p WHERE p.id = 'd:' || conversations.added_by))))) AS accepted";
 
 /// The groups through which someone's photo is trusted (see
 /// [`AppDb::photo_trusted`]): accepted, not ended, and ones we're a member
@@ -1459,6 +1494,12 @@ fn conversation_from_row(row: &SqliteRow) -> Result<Conversation> {
         system_contact: row.try_get("system_contact")?,
         dont_notify_mentions: row.try_get("dont_notify_mentions")?,
         blocked_at: row.try_get("blocked_at")?,
+        unregistered_at: row.try_get("unregistered_at")?,
+        removal_stage: match row.try_get::<Option<i64>, _>("removal_stage")? {
+            Some(2) => Some(RemovalStage::MessageRequest),
+            Some(_) => Some(RemovalStage::JustNotification),
+            None => None,
+        },
         about: row.try_get::<Option<String>, _>("about")?.filter(|a| !a.is_empty()),
     })
 }
@@ -2046,6 +2087,130 @@ impl AppDb {
             .execute(&self.writer)
             .await?;
         Ok(())
+    }
+
+    /// Records that these people were found no longer registered, each at
+    /// its time (Desktop's `setUnregistered`, keeping the latest), and that
+    /// `registered` were reached or heard from (`setRegistered`). Only
+    /// people with a chat are kept. True when anything changed.
+    pub async fn set_registration(&self, registered: &[String], unregistered: &[(String, i64)]) -> Result<bool> {
+        // Most sends and messages are from people who were never found
+        // unregistered: look first, on the read pool, rather than queue a
+        // write for each.
+        let mut found = Vec::new();
+        for sid in registered {
+            let flagged: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM conversations WHERE id = 'd:' || ? AND unregistered_at IS NOT NULL)",
+            )
+            .bind(sid)
+            .fetch_one(&self.pool)
+            .await?;
+            if flagged {
+                found.push(sid);
+            }
+        }
+        if found.is_empty() && unregistered.is_empty() {
+            return Ok(false);
+        }
+        let mut tx = self.write().await?;
+        let mut changed = 0;
+        for sid in found {
+            changed += sqlx::query("UPDATE conversations SET unregistered_at = NULL WHERE id = 'd:' || ? AND unregistered_at IS NOT NULL")
+                .bind(sid)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        }
+        for (sid, at) in unregistered {
+            changed += sqlx::query(
+                "UPDATE conversations SET unregistered_at = ?1 WHERE id = 'd:' || ?2 AND kind = 'direct' \
+                 AND (unregistered_at IS NULL OR unregistered_at < ?1)",
+            )
+            .bind(at)
+            .bind(sid)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        }
+        tx.commit().await?;
+        Ok(changed > 0)
+    }
+
+    /// Desktop's `removeContact`: a person's removal stage becomes
+    /// `justNotification`. False when they were removed already, or the
+    /// chat isn't a person's.
+    pub async fn remove_contact(&self, id: &ConversationId) -> Result<bool> {
+        let done = sqlx::query("UPDATE conversations SET removal_stage = 1 WHERE id = ? AND kind = 'direct' AND removal_stage IS NULL")
+            .bind(&id.0)
+            .execute(&self.writer)
+            .await?;
+        Ok(done.rows_affected() > 0)
+    }
+
+    /// Desktop's `restoreContact`: no longer removed, and the chat's "You
+    /// have removed this person" notices go. Their ids; `None` when they
+    /// weren't removed.
+    pub async fn restore_contact(&self, id: &ConversationId) -> Result<Option<Vec<i64>>> {
+        self.set_removal_stage(id, None, "removal_stage IS NOT NULL").await
+    }
+
+    /// A removed person messaged us (Desktop's `onNewMessage`): the chat is
+    /// a message request again, and the notice goes (`maybeClearContactRemoved`).
+    /// The ids of the notices removed; `None` when they weren't removed
+    /// or had messaged already.
+    pub async fn contact_messaged(&self, id: &ConversationId) -> Result<Option<Vec<i64>>> {
+        // Nearly every message is from someone not removed: look first, on
+        // the read pool.
+        let removed: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM conversations WHERE id = ? AND removal_stage = 1)")
+            .bind(&id.0)
+            .fetch_one(&self.pool)
+            .await?;
+        if !removed {
+            return Ok(None);
+        }
+        self.set_removal_stage(id, Some(2), "removal_stage = 1").await
+    }
+
+    async fn set_removal_stage(&self, id: &ConversationId, stage: Option<i64>, when: &'static str) -> Result<Option<Vec<i64>>> {
+        let mut tx = self.write().await?;
+        let done = sqlx::query(AssertSqlSafe(format!("UPDATE conversations SET removal_stage = ? WHERE id = ? AND {when}")))
+            .bind(stage)
+            .bind(&id.0)
+            .execute(&mut *tx)
+            .await?;
+        if done.rows_affected() == 0 {
+            return Ok(None);
+        }
+        let removed = delete_contact_removed_notices(&mut tx, id).await?;
+        tx.commit().await?;
+        Ok(Some(removed))
+    }
+
+    /// Who Storage Service says we removed (`hidden`), by service id, as
+    /// Desktop's `mergeContactRecord` calls `removeContact` or
+    /// `restoreContact`. Only people with a chat are kept. True when
+    /// anything changed.
+    pub async fn apply_removed(&self, people: &[(String, bool)]) -> Result<bool> {
+        let mut changed = false;
+        for batch in people.chunks(100) {
+            let mut tx = self.write().await?;
+            for (sid, hidden) in batch {
+                let id = ConversationId::direct(sid);
+                let sql = if *hidden {
+                    "UPDATE conversations SET removal_stage = 1 WHERE id = ? AND kind = 'direct' AND removal_stage IS NULL"
+                } else {
+                    "UPDATE conversations SET removal_stage = NULL WHERE id = ? AND removal_stage IS NOT NULL"
+                };
+                if sqlx::query(sql).bind(&id.0).execute(&mut *tx).await?.rows_affected() > 0 {
+                    changed = true;
+                    if !*hidden {
+                        delete_contact_removed_notices(&mut tx, &id).await?;
+                    }
+                }
+            }
+            tx.commit().await?;
+        }
+        Ok(changed)
     }
 
     /// A chat's "Mentions" while muted: `true` is Don't notify.
@@ -3593,6 +3758,22 @@ async fn current_long_text(conn: &mut sqlx::SqliteConnection, message_id: i64) -
         .fetch_optional(&mut *conn)
         .await?;
     Ok(json.flatten().map(|j| serde_json::from_str(&j)).transpose()?)
+}
+
+/// Deletes a chat's "You have removed this person" notices and returns
+/// their ids.
+async fn delete_contact_removed_notices(conn: &mut sqlx::SqliteConnection, id: &ConversationId) -> Result<Vec<i64>> {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "DELETE FROM messages WHERE conversation_id = ? AND author_key = 'notice' \
+         AND json_extract(notice, '$.type') = 'contact_removed' RETURNING id",
+    )
+    .bind(&id.0)
+    .fetch_all(&mut *conn)
+    .await?;
+    if !ids.is_empty() {
+        refresh_preview(conn, id).await?;
+    }
+    Ok(ids)
 }
 
 async fn refresh_preview(conn: &mut sqlx::SqliteConnection, id: &ConversationId) -> Result<()> {
