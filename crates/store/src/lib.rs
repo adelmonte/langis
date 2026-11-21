@@ -3484,13 +3484,17 @@ impl AppDb {
     }
 
     /// Records that a video was re-encoded before it was sent (with its new
-    /// size) or that that was tried and failed (`None`), so it isn't again;
+    /// size, and `video/mp4`) or that that was tried and failed (`None`),
+    /// so it isn't again;
     /// `Ok(false)` as for `set_attachment_path`.
     pub async fn finish_attachment_transcode(&self, message_id: i64, index: usize, size: Option<u64>) -> Result<bool> {
         self.edit_attachment(message_id, None, index, |att| {
             att.transcode = false;
             if let Some(size) = size {
                 att.size = size;
+                // What comes out is an MP4, whatever went in (a .mov,
+                // WebM): Desktop's `transcodeVideo` sets `VIDEO_MP4`.
+                att.content_type = "video/mp4".into();
             }
         })
         .await

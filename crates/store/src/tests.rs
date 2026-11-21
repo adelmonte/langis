@@ -304,15 +304,20 @@ async fn delete_edit_attachments_and_search() {
     assert_eq!(attachment.thumbnail_path.as_deref(), Some("/tmp/a-thumbnail.webp"));
     // A video still to be re-encoded keeps that mark until it's been tried.
     let mut video = incoming("d:v", "v", 3, "");
-    video.attachments = vec![AttachmentMeta { content_type: "video/mp4".into(), transcode: true, ..m.attachments[0].clone() }];
+    video.attachments = vec![AttachmentMeta { content_type: "video/quicktime".into(), transcode: true, ..m.attachments[0].clone() }];
     let video_id = db.insert_message(&video).await.unwrap();
     assert!(db.message(video_id).await.unwrap().unwrap().attachments[0].transcode);
     assert!(db.finish_attachment_transcode(video_id, 0, Some(4)).await.unwrap());
     let done = db.message(video_id).await.unwrap().unwrap().attachments[0].clone();
-    assert_eq!((done.transcode, done.size), (false, 4));
-    // Failed: the size stays.
-    assert!(db.finish_attachment_transcode(video_id, 0, None).await.unwrap());
-    assert_eq!(db.message(video_id).await.unwrap().unwrap().attachments[0].size, 4);
+    // Re-encoded: an MP4 now, whatever it was (Desktop's `transcodeVideo`).
+    assert_eq!((done.transcode, done.size, done.content_type.as_str()), (false, 4, "video/mp4"));
+    // Failed: the size and type stay.
+    let mut mov = incoming("d:v", "mov", 4, "");
+    mov.attachments = vec![AttachmentMeta { content_type: "video/quicktime".into(), transcode: true, size: 9, ..m.attachments[0].clone() }];
+    let mov_id = db.insert_message(&mov).await.unwrap();
+    assert!(db.finish_attachment_transcode(mov_id, 0, None).await.unwrap());
+    let kept = db.message(mov_id).await.unwrap().unwrap().attachments[0].clone();
+    assert_eq!((kept.transcode, kept.size, kept.content_type.as_str()), (false, 9, "video/quicktime"));
 
     let hits = db.search_messages("fox", 10).await.unwrap();
     assert_eq!(hits.iter().map(|h| h.message_id).collect::<Vec<_>>(), [id2, id]);

@@ -350,9 +350,10 @@ Our own story's `failed` lists who its send didn't reach (Desktop's "Send
 failed" when that's everyone, "Partially sent" otherwise);
 `Command::RetryStory { id }` sends it to them again.
 
-Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
-upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending
-meanwhile. Without ffmpeg the original goes.
+Videos (MP4, QuickTime `.mov`, Ogg, WebM) are re-encoded to H.264 at
+Desktop's sizes before upload when `ffmpeg` with libx264 is on `PATH`; the
+message shows as sending meanwhile, and once re-encoded the attachment's
+`content_type` is `video/mp4`. Without ffmpeg the original goes.
 
 ## 9. Calls
 
