@@ -3111,8 +3111,16 @@ impl Actor {
         self.note_registration(&[], &unregistered).await;
         let removed: Vec<(String, bool)> = contacts.iter().map(|c| (Aci::from(c.aci).service_id_string(), c.removed)).collect();
         match self.db.apply_removed(&removed).await {
-            Ok(true) => self.emit(Event::ConversationsChanged),
-            Ok(false) => {}
+            Ok(applied) => {
+                // Desktop's `mergeContactRecord` calls `removeContact`,
+                // which does the rest as for a removal here.
+                for conversation in &applied.removed {
+                    self.contact_removed(conversation).await;
+                }
+                if applied.changed {
+                    self.emit(Event::ConversationsChanged);
+                }
+            }
             Err(error) => warn!(%error, "failed to save removed contacts"),
         }
         let usernames: Vec<(String, String)> = contacts

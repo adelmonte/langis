@@ -966,10 +966,12 @@ async fn removed_contacts_as_desktop_stages_them() {
     let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
     assert!(c.removal_stage.is_none() && c.accepted);
     // Storage Service's `hidden`, both ways.
-    assert!(db.apply_removed(&[("a".into(), true), ("nobody".into(), true)]).await.unwrap());
-    assert!(!db.apply_removed(&[("a".into(), true)]).await.unwrap());
+    let applied = db.apply_removed(&[("a".into(), true), ("nobody".into(), true)]).await.unwrap();
+    assert_eq!(applied, AppliedRemovals { changed: true, removed: vec![conv("d:a")] });
+    assert_eq!(db.apply_removed(&[("a".into(), true)]).await.unwrap(), AppliedRemovals::default());
     assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().removal_stage.is_some());
-    assert!(db.apply_removed(&[("a".into(), false)]).await.unwrap());
+    let applied = db.apply_removed(&[("a".into(), false)]).await.unwrap();
+    assert!(applied.changed && applied.removed.is_empty());
     assert!(db.conversation(&conv("d:a")).await.unwrap().unwrap().removal_stage.is_none());
     // Not for groups.
     assert!(!db.remove_contact(&conv("g:00")).await.unwrap());

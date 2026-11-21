@@ -224,7 +224,11 @@ for leaving them out of the people offered for a new chat or group.
 **Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
 a contact row (`removeContact`): their chat's `removal_stage` becomes
 `JustNotification`, our profile is no longer shared with them, the chat
-gets a `Notice::ContactRemoved`, and Storage Service's `hidden` is set.
+gets a `Notice::ContactRemoved`, they come off our story lists (not My
+Story's "All except", which keeps leaving them out; `Event::StorySettingsChanged`
+follows), and Storage Service's `hidden` is set. A removal made on another
+device (`hidden` read from Storage Service) does the same here, notice
+included, as Desktop's `mergeContactRecord` calls `removeContact`.
 Leave them out of the people offered for a new chat. The chat isn't
 `accepted` while removed, but with `JustNotification` it keeps its composer
 (Desktop shows message request actions only for `MessageRequest`, which it

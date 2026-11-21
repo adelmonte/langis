@@ -990,6 +990,16 @@ impl Message {
     }
 }
 
+/// What [`AppDb::apply_removed`] changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AppliedRemovals {
+    /// Anyone's removal stage changed.
+    pub changed: bool,
+    /// The chats newly removed, which take the rest of Desktop's
+    /// `removeContact` (the notice, profile sharing, story lists).
+    pub removed: Vec<ConversationId>,
+}
+
 /// Someone or a group the account knows, whether or not there's a
 /// conversation yet.
 #[derive(Debug, Clone, PartialEq)]
@@ -2265,10 +2275,9 @@ impl AppDb {
 
     /// Who Storage Service says we removed (`hidden`), by service id, as
     /// Desktop's `mergeContactRecord` calls `removeContact` or
-    /// `restoreContact`. Only people with a chat are kept. True when
-    /// anything changed.
-    pub async fn apply_removed(&self, people: &[(String, bool)]) -> Result<bool> {
-        let mut changed = false;
+    /// `restoreContact`. Only people with a chat are kept.
+    pub async fn apply_removed(&self, people: &[(String, bool)]) -> Result<AppliedRemovals> {
+        let mut applied = AppliedRemovals::default();
         for batch in people.chunks(100) {
             let mut tx = self.write().await?;
             for (sid, hidden) in batch {
@@ -2279,15 +2288,17 @@ impl AppDb {
                     "UPDATE conversations SET removal_stage = NULL WHERE id = ? AND removal_stage IS NOT NULL"
                 };
                 if sqlx::query(sql).bind(&id.0).execute(&mut *tx).await?.rows_affected() > 0 {
-                    changed = true;
-                    if !*hidden {
+                    applied.changed = true;
+                    if *hidden {
+                        applied.removed.push(id);
+                    } else {
                         delete_contact_removed_notices(&mut tx, &id).await?;
                     }
                 }
             }
             tx.commit().await?;
         }
-        Ok(changed)
+        Ok(applied)
     }
 
     /// A chat's "Mentions" while muted: `true` is Don't notify, `false`
