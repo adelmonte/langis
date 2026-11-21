@@ -2887,6 +2887,7 @@ dependencies = [
 name = "langis-core"
 version = "0.1.0"
 dependencies = [
+ "aes 0.9.4",
  "aes-gcm",
  "anyhow",
  "argon2",
@@ -2894,6 +2895,7 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "chrono",
+ "ctr 0.10.1",
  "flate2",
  "futures",
  "hex",
@@ -2907,6 +2909,7 @@ dependencies = [
  "keyring",
  "langis-calls",
  "langis-store",
+ "libc",
  "libsignal-account-keys 0.1.0 (git+https://github.com/signalapp/libsignal?tag=v0.106.1)",
  "libsignal-core 0.1.0 (git+https://github.com/signalapp/libsignal?tag=v0.106.1)",
  "libsignal-keytrans",

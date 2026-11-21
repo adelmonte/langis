@@ -29,7 +29,7 @@ const HOUSE: &str = "g:000000000000000000000000000000000000000000000000000000000
 const INVITED: &str = "g:0000000000000000000000000000000000000000000000000000000000000005";
 /// How long a vote here shows as sending.
 const DEMO_VOTE_SENDING: Duration = Duration::from_millis(800);
-const SELF: &str = "d:00000000-0000-4000-8000-000000000001";
+pub(crate) const SELF: &str = "d:00000000-0000-4000-8000-000000000001";
 
 const MINUTE: i64 = 60_000;
 /// Our demux id in the demo's group calls.
@@ -62,7 +62,7 @@ fn aci(id: &str) -> &str {
     id.trim_start_matches("d:")
 }
 
-async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
+pub(crate) async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
     if !db.conversations().await?.is_empty() {
         return Ok(());
     }
@@ -936,6 +936,16 @@ const DEMO_REMOTE_CONFIG: &[(&str, &str)] = &[
     ("desktop.shareContact.prod", "8.30.0"),
 ];
 
+/// The demo account's keys for Desktop backups: a made-up recovery key.
+pub(crate) fn demo_backup_keys() -> crate::local_backup::AccountKeys {
+    crate::local_backup::AccountKeys {
+        aci: presage::libsignal_service::protocol::Aci::parse_from_service_id_string(SELF.trim_start_matches("d:")).expect("a valid ACI"),
+        entropy_pool: "demo0recovery0key0for0langis0made0up0and0not0anyones0real0key000".into(),
+        profile_key: [0x42; 32],
+        media_root_key: None,
+    }
+}
+
 pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::UnboundedReceiver<Command>, events: mpsc::UnboundedSender<Event>) {
     let emit = |e: Event| {
         let _ = events.unbounded_send(e);
@@ -978,6 +988,9 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             break;
         }
         if crate::demo_groups::handle(&db, &data_dir, &command, &emit).await {
+            continue;
+        }
+        if crate::local_backup::handle(&db, &data_dir, Some(demo_backup_keys()), &command, &events).await {
             continue;
         }
         match command {
@@ -2417,6 +2430,13 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 emit(Event::StorySettingsChanged);
             }
             Command::CancelKeyTransparency => {}
+            // Handled by `local_backup::handle` above.
+            Command::LoadRecoveryKey
+            | Command::SetLocalBackupFolder { .. }
+            | Command::RecoveryKeyConfirmed
+            | Command::StartLocalBackup
+            | Command::CancelLocalBackup
+            | Command::DisableLocalBackups { .. } => {}
             // Profiles and usernames are saved here and go nowhere.
             Command::LoadProfile { .. } => {}
             Command::SetProfile(edit) => {
@@ -2522,7 +2542,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
 pub(crate) const DEMO_BADGE: &str = "DEMO_SUSTAINER";
 
 /// Profiles for the made-up people and for us, a badge, and our username.
-async fn seed_profiles(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
+pub(crate) async fn seed_profiles(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
     use langis_store::{Badge, BadgeCategory, BadgeImage, FetchedProfile, ProfileBadge};
     let me = aci(SELF);
     if db.person_profile(me).await?.is_some_and(|p| p.fetched_at > 0) {

@@ -20,6 +20,7 @@ mod groups;
 pub mod group_admin;
 mod history;
 mod backup_media;
+pub mod local_backup;
 mod safety;
 mod key_transparency;
 mod calling;
@@ -812,6 +813,27 @@ pub enum Command {
     /// Clears the call history (Desktop's "Clear call history"), here and
     /// on our other devices.
     ClearCallHistory,
+    /// Desktop backups: asks for this device's recovery key (the account
+    /// entropy pool the phone shared when linking). Answers with
+    /// `Event::RecoveryKey`.
+    LoadRecoveryKey,
+    /// Desktop backups' "Choose folder": backups go in a `SignalBackups`
+    /// folder made in `parent` ([`local_backup::SETTING_FOLDER`]).
+    /// Answers with `Event::LocalBackupsChanged`.
+    SetLocalBackupFolder { parent: PathBuf },
+    /// The user typed the recovery key back (Desktop's "Confirm your
+    /// recovery key", then "Keep your key safe"): its hash is kept in
+    /// [`local_backup::SETTING_KEY_VIEWED`]. Answers with
+    /// `Event::LocalBackupsChanged`.
+    RecoveryKeyConfirmed,
+    /// "Back up now": writes a backup to the folder, reporting
+    /// `Event::LocalBackup` as it goes. One at a time.
+    StartLocalBackup,
+    /// Stops the backup in progress (it ends `Failed(Cancelled)`).
+    CancelLocalBackup,
+    /// "Turn off backups": forgets the folder, the last backup and the
+    /// confirmed key; `delete` also removes the `SignalBackups` folder.
+    DisableLocalBackups { delete: bool },
     /// Unlinks this device and wipes local state.
     Unlink,
     /// Stops the backend for good (the app quitting, an account removed
@@ -1482,6 +1504,15 @@ pub enum Event {
     /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
     /// Signal's gRPC call quality service, which langis can't reach.
     CallQualitySurvey(call_survey::CallSurvey),
+    /// The answer to `Command::LoadRecoveryKey`: the 64-character recovery
+    /// key, or `None` when this device wasn't given one (show it with
+    /// [`local_backup::format_key`]).
+    RecoveryKey(Option<String>),
+    /// How a Desktop backup is going (`Command::StartLocalBackup`).
+    LocalBackup(local_backup::LocalBackupProgress),
+    /// Desktop backups' settings changed (folder, last backup, confirmed
+    /// key): read the `local_backup::SETTING_*` keys again.
+    LocalBackupsChanged,
     Error(String),
     Unlinked,
 }

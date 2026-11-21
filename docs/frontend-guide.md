@@ -419,7 +419,59 @@ progress at once. `ShareQuality::PRESETS` has named choices for a menu;
 the default is Desktop's 1080p at 15 fps. WebRTC still lowers the bitrate
 on a poor connection.
 
-## 10. Stopping
+## 10. Desktop backups
+
+Signal Desktop's Settings > Backups > "Desktop backups" (its local
+backups): an end-to-end encrypted backup in a folder on this computer,
+which the phone restores with "Restore or transfer", "On Device Backup".
+`langis_core::local_backup` writes it as Desktop does: a
+`SignalBackups` folder holding `signal-backup-<date>` snapshots (the two
+newest are kept) and a shared `files/` folder of encrypted attachments.
+
+| You do | You get |
+|---|---|
+| `Command::LoadRecoveryKey` | `Event::RecoveryKey(Some(key))`: the 64-character recovery key (the account entropy pool). `None` when the phone didn't give this device one; backups can't be made then. |
+| `Command::SetLocalBackupFolder { parent }` ("Choose folder") | `SignalBackups` is made in `parent`; `Event::LocalBackupsChanged`. |
+| `Command::RecoveryKeyConfirmed` (after the user typed the key back) | `Event::LocalBackupsChanged` |
+| `Command::StartLocalBackup` ("Back up now") | `Event::LocalBackup(progress)`: `Messages`, then `Attachments { done, total }` (bytes), then `Complete { at, snapshot }` or `Failed(error)` |
+| `Command::CancelLocalBackup` | `Failed(Cancelled)`; the unfinished snapshot is removed |
+| `Command::DisableLocalBackups { delete }` ("Turn off backups") | `Event::LocalBackupsChanged`; with `delete`, the `SignalBackups` folder is gone |
+
+The state is in settings rows: `local_backup::SETTING_FOLDER` (set while
+backups are on), `SETTING_LAST` (`local_backup::parse_last` gives the
+time and folder of the last one) and `SETTING_KEY_VIEWED` (the
+`local_backup::key_hash` of the key the user confirmed). Desktop's flow:
+"Set up" leads to choosing a folder, then the key ("Your recovery key",
+shown with `local_backup::format_key(key, true)`), then "Confirm your
+recovery key" (`local_backup::key_matches`), then "Keep your key safe".
+Backups are set up when the folder is set and the confirmed key's hash
+is there. When that hash isn't the current key's, Desktop says "Your
+recovery key has changed" before backing up or showing the key.
+`LocalBackupError` sorts failures as Desktop's export dialog does: not
+enough storage to start (`bytes_needed`), ran out while writing, no
+permission to write, anything else.
+
+What goes in: the account's profile and settings, people and groups with a
+chat, chats (archived, pinned, muted, timers), chat folders, installed
+sticker packs, messages with their text, mentions, formatting, quotes,
+reactions, link previews, edits, polls, stickers, deletes, view-once
+messages (without their file, as Desktop's local backups), send states,
+the notices langis shows that the backup format has an update for, 1:1
+calls, and every downloaded file. Messages disappearing within a day are
+left out, as Desktop leaves them out. Group calls, shared contacts,
+payments, gift badges and the contact-removed notice aren't written; an
+attachment neither downloaded nor downloadable can't be described in the
+format and is dropped from its message. Desktop pads the compressed
+backup to hide its size; langis doesn't.
+
+Each backup goes through libsignal's backup validator before it's kept.
+The tests export the demo data, validate it, check the folder layout,
+metadata and a file's encryption, and import it back with the link-time
+history import to compare chats and messages. No backup made here has
+been restored on a phone: that needs a real account and phone, and hasn't
+been tried.
+
+## 11. Stopping
 
 Call `backend.stop(Duration::from_secs(5))` from a non-async thread before
 the process exits. It hangs up a call in progress (waiting up to two
