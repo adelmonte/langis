@@ -113,6 +113,8 @@ pub(crate) struct StorageSnapshot {
     pub sticker_packs: Vec<StorageStickerPack>,
     /// Favorite stickers, and their tombstones.
     pub favorite_stickers: Vec<langis_store::RemoteFavoriteSticker>,
+    /// Hidden sticker packs, and their tombstones.
+    pub hidden_sticker_packs: Vec<langis_store::RemoteHiddenStickerPack>,
     /// Notification profiles and the manual override.
     pub notification_profiles: notification_profiles::RemoteProfiles,
 }
@@ -154,6 +156,20 @@ fn favorite_sticker(record: &presage::proto::FavoriteStickerRecord) -> Option<la
         pack_key: Some(hex::encode(&record.pack_key)).filter(|_| !record.pack_key.is_empty()),
         favorited_at: clamp_millis(record.favorited_at_timestamp),
         deleted_at: clamp_millis(record.deleted_at_timestamp),
+    })
+}
+
+/// A `HiddenStickerPackRecord` (Desktop's `mergeHiddenStickerPackRecord`,
+/// commit 5edf85d87): one without a pack id is skipped (Desktop throws);
+/// one without a key is kept for the merge to skip unless it's a tombstone.
+fn hidden_sticker_pack(record: &presage::proto::HiddenStickerPackRecord) -> Option<langis_store::RemoteHiddenStickerPack> {
+    if record.pack_id.is_empty() {
+        return None;
+    }
+    Some(langis_store::RemoteHiddenStickerPack {
+        pack_id: hex::encode(&record.pack_id),
+        pack_key: Some(hex::encode(&record.pack_key)).filter(|_| !record.pack_key.is_empty()),
+        unhidden_at: clamp_millis(record.unhidden_at_timestamp),
     })
 }
 
@@ -268,6 +284,7 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                     | IdentifierType::ChatFolder
                     | IdentifierType::StickerPack
                     | IdentifierType::FavoriteStickerPack
+                    | IdentifierType::HiddenStickerPack
                     | IdentifierType::NotificationProfile
             )
         })
@@ -330,6 +347,10 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                 Some(Record::Sticker(favorite)) => match favorite_sticker(&favorite) {
                     Some(favorite) => snapshot.favorite_stickers.push(favorite),
                     None => tracing::warn!(sticker = favorite.sticker_id, "skipping a favorite sticker record without a pack id"),
+                },
+                Some(Record::HiddenStickerPack(pack)) => match hidden_sticker_pack(&pack) {
+                    Some(pack) => snapshot.hidden_sticker_packs.push(pack),
+                    None => tracing::warn!("skipping a hidden sticker pack record without a pack id"),
                 },
                 _ => {}
             }
@@ -1145,6 +1166,70 @@ pub(crate) async fn write_favorite_sticker(
             None => (None, new_favorite_sticker_record(pack_id, sticker_id)),
         };
         let Some(record) = edit_favorite_sticker(&record, key, favorited_at, deleted_at)? else { return Ok(()) };
+        if session.commit(manager, &manifest, old_key.as_deref(), kind, &record).await? {
+            return Ok(());
+        }
+    }
+    bail!("storage kept changing on another device; try again")
+}
+
+const RECORD_HIDDEN_STICKER_PACK: u32 = 10; // StorageRecord.hiddenStickerPack
+const HIDDEN_KEY: u32 = 2;
+const HIDDEN_UNHIDDEN_AT: u32 = 3;
+
+/// Sets a hidden sticker pack record (Desktop's `toHiddenStickerPackRecord`):
+/// its key while hidden, or (unhidden at `unhidden_at`) no key, keeping its
+/// pack id and fields this client doesn't know. `Ok(None)` when nothing
+/// changes.
+pub(crate) fn edit_hidden_sticker_pack(record: &[u8], key: &[u8], unhidden_at: u64) -> anyhow::Result<Option<Vec<u8>>> {
+    edit_inner(record, RECORD_HIDDEN_STICKER_PACK, |inner| {
+        let fields = wire::fields(inner).context("malformed hidden sticker pack record")?;
+        let mut out = Vec::with_capacity(inner.len() + 48);
+        for field in fields.iter().filter(|f| !matches!(f.number, HIDDEN_KEY | HIDDEN_UNHIDDEN_AT)) {
+            out.extend_from_slice(field.raw);
+        }
+        if unhidden_at == 0 {
+            wire::put_len(&mut out, HIDDEN_KEY, key);
+        } else {
+            wire::put_varint_field(&mut out, HIDDEN_UNHIDDEN_AT, unhidden_at);
+        }
+        let decode = |bytes: &[u8]| presage::proto::HiddenStickerPackRecord::decode(bytes).ok();
+        let same = decode(inner)
+            .zip(decode(&out))
+            .is_some_and(|(old, new)| (old.pack_key, old.unhidden_at_timestamp) == (new.pack_key, new.unhidden_at_timestamp));
+        Ok((!same).then_some(out))
+    })
+}
+
+fn new_hidden_sticker_pack_record(pack_id: &[u8]) -> Vec<u8> {
+    let pack = presage::proto::HiddenStickerPackRecord { pack_id: pack_id.to_vec(), ..Default::default() };
+    StorageRecord { record: Some(Record::HiddenStickerPack(pack)) }.encode_to_vec()
+}
+
+/// Saves a hidden sticker pack (or, with `unhidden_at`, its tombstone) for
+/// the whole account, adding its record if Storage Service has none.
+pub(crate) async fn write_hidden_sticker_pack(manager: &SignalManager, pack_id: &[u8], key: &[u8], unhidden_at: u64) -> anyhow::Result<()> {
+    let session = Session::new(manager).await?;
+    let kind = IdentifierType::HiddenStickerPack;
+    for _ in 0..3 {
+        let manifest = session.manifest().await?;
+        let ikm = manifest_ikm(&manifest);
+        let keys: Vec<Vec<u8>> =
+            manifest.identifiers.iter().filter(|k| k.r#type() == kind).map(|k| k.raw.clone()).collect();
+        let mut existing = None;
+        for batch in keys.chunks(READ_BATCH) {
+            existing = session.read_many(batch, ikm).await?.into_iter().find(|(_, raw)| {
+                matches!(StorageRecord::decode(raw.as_slice()), Ok(StorageRecord { record: Some(Record::HiddenStickerPack(p)) }) if p.pack_id == pack_id)
+            });
+            if existing.is_some() {
+                break;
+            }
+        }
+        let (old_key, record) = match existing {
+            Some((k, raw)) => (Some(k), raw),
+            None => (None, new_hidden_sticker_pack_record(pack_id)),
+        };
+        let Some(record) = edit_hidden_sticker_pack(&record, key, unhidden_at)? else { return Ok(()) };
         if session.commit(manager, &manifest, old_key.as_deref(), kind, &record).await? {
             return Ok(());
         }
@@ -2492,6 +2577,33 @@ mod tests {
         assert!(wire::fields(&inner).unwrap().iter().any(|f| f.number == 99), "unknown field kept");
         // Installed without a key: not a pack Desktop would take.
         assert_eq!(sticker_pack(&presage::proto::InstalledStickerPackRecord { pack_id: id, ..Default::default() }), None);
+    }
+
+    #[test]
+    fn hidden_sticker_pack_records_read_and_write_as_desktops() {
+        let (id, key) = (vec![0xab; 16], vec![0xcd; 32]);
+        let read = |bytes: &[u8]| match StorageRecord::decode(bytes).unwrap().record {
+            Some(Record::HiddenStickerPack(pack)) => pack,
+            other => panic!("{other:?}"),
+        };
+        let new = new_hidden_sticker_pack_record(&id);
+        let mut inner = wire::fields(&new).unwrap()[0].payload.unwrap().to_vec();
+        wire::put_varint_field(&mut inner, 99, 1);
+        let mut record = Vec::new();
+        wire::put_len(&mut record, RECORD_HIDDEN_STICKER_PACK, &inner);
+        let hidden = edit_hidden_sticker_pack(&record, &key, 0).unwrap().expect("changed");
+        assert!(edit_hidden_sticker_pack(&hidden, &key, 0).unwrap().is_none());
+        assert_eq!(
+            hidden_sticker_pack(&read(&hidden)),
+            Some(langis_store::RemoteHiddenStickerPack { pack_id: hex::encode(&id), pack_key: Some(hex::encode(&key)), unhidden_at: 0 })
+        );
+        // Unhidden: no key, when (Desktop's `toHiddenStickerPackRecord`).
+        let unhidden = edit_hidden_sticker_pack(&hidden, &key, 500).unwrap().expect("changed");
+        let pack = read(&unhidden);
+        assert!(pack.pack_key.is_empty() && pack.unhidden_at_timestamp == 500);
+        let inner = wire::fields(&unhidden).unwrap()[0].payload.unwrap().to_vec();
+        assert!(wire::fields(&inner).unwrap().iter().any(|f| f.number == 99), "unknown field kept");
+        assert_eq!(hidden_sticker_pack(&presage::proto::HiddenStickerPackRecord::default()), None);
     }
 
     #[test]

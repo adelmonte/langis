@@ -36,6 +36,8 @@ pub(super) struct FavoriteDownloads {
     /// Counts favorites changed here, so a sync can tell whether one came
     /// after its Storage Service snapshot.
     pub(super) local_changes: Cell<u64>,
+    /// The same for hidden sticker packs (`stickers.rs`).
+    pub(super) hidden_pack_changes: Cell<u64>,
     running: Cell<bool>,
     /// Asked for while a run was going: another run follows it.
     again: Cell<bool>,

@@ -951,6 +951,10 @@ impl Actor {
             }
             // Transferred view-once messages may be old enough to erase.
             self.view_once_expiry.notify_one();
+            // Favorites from the backup want their images.
+            if imported.favorite_stickers > 0 {
+                self.favorite_stickers_changed().await;
+            }
             let packs = std::mem::take(&mut imported.sticker_packs);
             if !packs.is_empty() {
                 tokio::task::spawn_local(self.clone().install_sticker_packs(manager.clone(), packs));
@@ -1037,6 +1041,7 @@ impl Actor {
                 }
                 Command::InstallStickerPack { id, key } => self.install_sticker_pack_ui(id, key).await,
                 Command::UninstallStickerPack { id, key } => self.uninstall_sticker_pack_ui(id, key).await,
+                Command::SetStickerPackHidden { id, key, hidden } => self.set_sticker_pack_hidden(id, key, hidden).await,
                 Command::OrderStickerPacks(ids) => self.order_sticker_packs(ids).await,
                 Command::SetStickerFavorite { pack_id, pack_key, sticker_id, favorite } => {
                     self.set_sticker_favorite(pack_id, pack_key, sticker_id, favorite).await
@@ -3010,6 +3015,7 @@ impl Actor {
         }
         // Favorites changed after this point are newer than the snapshot.
         let favorite_changes = self.favorite_downloads.local_changes.get();
+        let hidden_pack_changes = self.favorite_downloads.hidden_pack_changes.get();
         let storage::StorageSnapshot {
             contacts,
             pinned,
@@ -3029,6 +3035,7 @@ impl Actor {
             chat_folders,
             sticker_packs,
             favorite_stickers,
+            hidden_sticker_packs,
             notification_profiles,
         } = match storage::fetch(manager).await {
             Ok(snapshot) => snapshot,
@@ -3072,6 +3079,7 @@ impl Actor {
         self.apply_storage_notification_profiles(notification_profiles).await;
         self.apply_storage_sticker_packs(sticker_packs).await;
         self.apply_storage_favorite_stickers(favorite_stickers, favorite_changes).await;
+        self.apply_storage_hidden_sticker_packs(hidden_sticker_packs, hidden_pack_changes).await;
         if let Err(error) = self.db.apply_profile_sharing(&profile_sharing).await {
             warn!(error = %format!("{error:#}"), "failed to save profile sharing");
         }

@@ -472,6 +472,14 @@ pub enum Command {
     /// Installed packs in this order (Desktop's drag to reorder), saved for
     /// our other devices.
     OrderStickerPacks(Vec<Vec<u8>>),
+    /// Hides a received pack from the sticker manager's "Shared With You",
+    /// or (`hidden: false`, the toast's Undo) shows it again, here and on
+    /// our other devices (its `HiddenStickerPackRecord`; Desktop's
+    /// `markStickerPackAsHidden`). Hiding an installed pack uninstalls it
+    /// first; installing a pack shows it again. Answered with
+    /// `Event::StickerPackHidden`. Offered only while
+    /// `RemoteConfig::sticker_pack_hiding` is on.
+    SetStickerPackHidden { id: Vec<u8>, key: Vec<u8>, hidden: bool },
     /// Favorites a sticker, or unfavorites it, here and on our other
     /// devices (its `FavoriteStickerRecord`; Desktop's
     /// `markStickerAsFavorite`). The pack needn't be installed.
@@ -1411,6 +1419,9 @@ pub enum Event {
     StickerUpload(sticker_upload::StickerUpload),
     /// What the sticker manager lists (answer to `Command::LoadStickerManager`).
     StickerManager(stickers::StickerManagerView),
+    /// `Command::SetStickerPackHidden` took (Desktop's "Sticker pack
+    /// hidden" toast, with Undo, or "Sticker pack unhidden").
+    StickerPackHidden { id: Vec<u8>, key: Vec<u8>, hidden: bool },
     /// A pack opened, or why it couldn't be (Desktop's "Error opening
     /// sticker pack").
     StickerPackPreview { id: Vec<u8>, result: Result<stickers::StickerPackPreview, String> },

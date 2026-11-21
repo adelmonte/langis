@@ -3243,6 +3243,25 @@ async fn favorite_stickers_stop_at_the_limit() {
 }
 
 #[tokio::test]
+async fn favorite_stickers_import_from_a_backup_up_to_the_limit() {
+    let db = test_db().await;
+    db.favorite_sticker("aa", "k1", 3, 10).await.unwrap();
+    db.unfavorite_sticker("aa", 3, 11).await.unwrap();
+    let import = |pack: &str, id: u32, at: i64| ImportedFavorite { pack_id: pack.into(), pack_key: "kk".into(), sticker_id: id, favorited_at: at };
+    // One we know (a tombstone here) is left as it is; the rest come in as
+    // Storage Service has them.
+    assert_eq!(db.import_favorite_stickers(&[import("aa", 3, 20), import("bb", 1, 30)]).await.unwrap(), 1);
+    let all = db.favorite_stickers().await.unwrap();
+    let bb = all.iter().find(|f| f.pack_id == "bb").unwrap();
+    assert_eq!((bb.favorited_at, bb.needs_sync, bb.pack_key.as_deref()), (Some(30), false, Some("kk")));
+    assert!(!all.iter().find(|f| f.pack_id == "aa").unwrap().is_active());
+    // No more than the limit.
+    let many: Vec<_> = (0..FAVORITE_STICKER_LIMIT as u32 + 5).map(|i| import("cc", i, 1)).collect();
+    assert_eq!(db.import_favorite_stickers(&many).await.unwrap(), FAVORITE_STICKER_LIMIT - 1);
+    assert_eq!(db.favorite_stickers().await.unwrap().iter().filter(|f| f.is_active()).count(), FAVORITE_STICKER_LIMIT);
+}
+
+#[tokio::test]
 async fn edit_status_shows_failures_and_keeps_receipts() {
     let db = test_db().await;
     let id = db.insert_message(&NewMessage { status: DeliveryStatus::Read, ..outgoing("d:b", 100, "hi") }).await.unwrap();

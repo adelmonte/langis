@@ -195,6 +195,15 @@ and formatting as `SendFile`'s). `Forward { message_ids, conversations, body }` 
 messages to other chats; `body` is a single message's text as edited
 before sending (Desktop's forward editor), `None` to send it unchanged.
 
+**Hidden sticker packs** (Desktop commits 5edf85d87, 8049395d9): while
+`RemoteConfig::sticker_pack_hiding` is on, a pack in the sticker manager's
+"Shared With You" can be hidden with `Command::SetStickerPackHidden`
+(`hidden: false` undoes it); `Event::StickerPackHidden` follows, and the
+next `Event::StickerManager` leaves it out. Hidden packs sync through
+Storage Service and come with transferred history, as do favorite
+stickers; installing a pack shows it again.
+
+
 Chat state changes go through `Command::SetChat { conversation, change }`
 (archive, mute, mark unread, block, hide stories, and a group's
 `DontNotifyMentions`, Desktop's "Mentions: Don't notify" while muted),

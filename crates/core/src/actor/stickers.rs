@@ -20,6 +20,9 @@ use super::*;
 
 /// Packs whose manifest and cover are fetched each time the manager opens.
 const META_PER_RUN: usize = 24;
+/// Hidden pack records written again at each sync, for changes whose
+/// write failed and ones Storage Service doesn't have.
+const HIDDEN_WRITES_PER_SYNC: usize = 20;
 
 thread_local! {
     /// A metadata fetch or storage install is running (the actor's thread).
@@ -108,7 +111,13 @@ impl Actor {
             .collect();
         // Desktop's "Shared With You": every pack we know that isn't the
         // Artist Series, installed ones included, newest first.
-        let received = rows.iter().filter(|r| hex::decode(&r.id).is_ok_and(|id| !is_blessed(&id))).filter_map(summary_of_row).collect();
+        // Less the ones hidden (Desktop's `getReceivedStickerPacks`).
+        let hidden = self.db.hidden_sticker_pack_ids().await.unwrap_or_default();
+        let received = rows
+            .iter()
+            .filter(|r| hex::decode(&r.id).is_ok_and(|id| !is_blessed(&id)) && !hidden.contains(&r.id))
+            .filter_map(summary_of_row)
+            .collect();
         StickerManagerView { installed: installed_summaries, blessed, received }
     }
 
@@ -234,6 +243,7 @@ impl Actor {
             Ok(installed) => installed,
             Err(error) => return self.error("failed to save the sticker pack", error),
         };
+        self.unhide_installed_pack(&id).await;
         self.stickers_changed().await;
         match storage::write_sticker_pack(&manager, &id, &key, position, 0).await {
             Ok(()) => self.storage_written(),
@@ -280,6 +290,9 @@ impl Actor {
     /// removes them; the order and the manager follow.
     pub(super) async fn apply_sticker_pack_sync(self: &Rc<Self>, packs: Vec<(Vec<u8>, Option<Vec<u8>>)>) {
         for (id, key) in packs {
+            if key.is_some() {
+                self.unhide_installed_pack(&id).await;
+            }
             let result = match key {
                 Some(key) => self.db.install_sticker_pack_row(&hex_of(&id), &hex_of(&key), None, now_millis()).await.map(|_| ()),
                 None => self.db.uninstall_sticker_pack_row(&hex_of(&id), now_millis()).await.map(|_| ()),
@@ -289,6 +302,121 @@ impl Actor {
             }
         }
         self.stickers_changed().await;
+    }
+
+    /// Desktop's `maybeUnhideStickerPack`, when a pack is installed (here,
+    /// by sync or from Storage Service): a hidden pack is shown again, and
+    /// its tombstone written.
+    async fn unhide_installed_pack(self: &Rc<Self>, id: &[u8]) {
+        match self.db.unhide_sticker_pack(&hex_of(id), now_millis()).await {
+            Ok(Some(tombstone)) => {
+                self.note_hidden_pack_change();
+                let this = self.clone();
+                tokio::task::spawn_local(async move { this.write_hidden_pack_now(&tombstone).await });
+            }
+            Ok(None) => {}
+            Err(error) => warn!(%error, "failed to unhide an installed sticker pack"),
+        }
+    }
+
+    fn note_hidden_pack_change(&self) {
+        let changes = &self.favorite_downloads.hidden_pack_changes;
+        changes.set(changes.get() + 1);
+    }
+
+    /// Writes a hidden pack's record (or tombstone) and marks it written;
+    /// one that fails is written again at the next sync.
+    async fn write_hidden_pack_now(&self, pack: &langis_store::HiddenStickerPack) {
+        let Some(manager) = self.manager() else { return };
+        match self.write_hidden_pack(&manager, pack).await {
+            Ok(()) => self.storage_written(),
+            Err(error) => warn!(error = %format!("{error:#}"), "couldn't write a hidden sticker pack's record yet"),
+        }
+    }
+
+    async fn write_hidden_pack(&self, manager: &SignalManager, pack: &langis_store::HiddenStickerPack) -> anyhow::Result<()> {
+        let id = hex::decode(&pack.pack_id)?;
+        let key = pack.pack_key.as_deref().map(hex::decode).transpose()?.unwrap_or_default();
+        let unhidden_at = pack.unhidden_at.unwrap_or(0).max(0) as u64;
+        storage::write_hidden_sticker_pack(manager, &id, &key, unhidden_at).await?;
+        self.db.hidden_sticker_pack_written(pack).await?;
+        // No longer pending, so a sync whose snapshot came before this
+        // write would undo it: it counts as a change too.
+        self.note_hidden_pack_change();
+        Ok(())
+    }
+
+    /// Desktop's `markStickerPackAsHidden` (commits 5edf85d87, 8049395d9):
+    /// hiding uninstalls an installed pack first, takes the pack's key,
+    /// and writes the record; showing it again writes its tombstone.
+    pub(super) async fn set_sticker_pack_hidden(self: &Rc<Self>, id: Vec<u8>, key: Vec<u8>, hidden: bool) {
+        let hex = hex_of(&id);
+        let changed = if hidden {
+            if self.load_stickers().await.iter().any(|p| p.id == id) {
+                self.uninstall_sticker_pack_ui(id.clone(), key.clone()).await;
+            }
+            // The key we know the pack by, over the one the request names.
+            let rows = self.db.sticker_pack_rows().await.unwrap_or_default();
+            let key_hex = rows.into_iter().find(|r| r.id == hex).map_or_else(|| hex_of(&key), |r| r.key);
+            self.db.hide_sticker_pack(&hex, &key_hex).await
+        } else {
+            self.db.unhide_sticker_pack(&hex, now_millis()).await
+        };
+        let pack = match changed {
+            Ok(pack) => pack,
+            Err(error) => return self.error("failed to save the hidden sticker pack", error),
+        };
+        if let Some(pack) = &pack {
+            self.note_hidden_pack_change();
+            self.emit(Event::StickerManager(self.sticker_manager_view().await));
+            self.emit(Event::StickerPackHidden { id: id.clone(), key: key.clone(), hidden });
+            self.write_hidden_pack_now(pack).await;
+        }
+    }
+
+    /// Storage Service's hidden packs, merged (Desktop's
+    /// `mergeHiddenStickerPackRecord`; tombstones older than the message
+    /// queue time go), then what's left to write written (at most
+    /// [`HIDDEN_WRITES_PER_SYNC`]). `changes` is the count of local changes
+    /// from before the snapshot was read, as for favorites.
+    pub(super) async fn apply_storage_hidden_sticker_packs(self: &Rc<Self>, remote: Vec<langis_store::RemoteHiddenStickerPack>, changes: u64) {
+        if self.favorite_downloads.hidden_pack_changes.get() != changes {
+            return info!("hidden sticker packs changed during the sync; merging them at the next");
+        }
+        let drop_before = now_millis() - crate::remote_config().message_queue_time_ms();
+        let merge = match self.db.merge_storage_hidden_packs(&remote, drop_before).await {
+            Ok(merge) => merge,
+            Err(error) => return warn!(%error, "failed to save hidden sticker packs"),
+        };
+        if merge.keyless > 0 {
+            warn!(skipped = merge.keyless, "hidden sticker pack records without a pack key skipped");
+        }
+        if merge.changed {
+            self.emit(Event::StickerManager(self.sticker_manager_view().await));
+        }
+        let Some(manager) = self.manager() else { return };
+        let pending: Vec<_> = self
+            .db
+            .hidden_sticker_packs()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p.needs_sync)
+            .take(HIDDEN_WRITES_PER_SYNC)
+            .collect();
+        let mut written = false;
+        for pack in &pending {
+            match self.write_hidden_pack(&manager, pack).await {
+                Ok(()) => written = true,
+                Err(error) => {
+                    warn!(error = %format!("{error:#}"), "couldn't write a hidden sticker pack's record");
+                    break;
+                }
+            }
+        }
+        if written {
+            self.storage_written();
+        }
     }
 
     pub(super) async fn stickers_changed(self: &Rc<Self>) {
@@ -324,7 +452,10 @@ impl Actor {
                     }
                     let _ = self.db.uninstall_sticker_pack_row(&hex, at).await;
                 }
-                (None, Some(key)) if !installed.contains(&pack.id) => to_install.push((pack.id, key, pack.position)),
+                (None, Some(key)) if !installed.contains(&pack.id) => {
+                    self.unhide_installed_pack(&pack.id).await;
+                    to_install.push((pack.id, key, pack.position))
+                }
                 (None, Some(key)) => {
                     let _ = self.db.install_sticker_pack_row(&hex, &hex_of(&key), Some(pack.position), now_millis()).await;
                     changed = true;

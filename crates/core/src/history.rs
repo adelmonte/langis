@@ -230,6 +230,10 @@ pub(crate) struct Imported {
     pub long_texts: Vec<i64>,
     /// Installed sticker packs: `(pack id, pack key)`.
     pub sticker_packs: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Favorite stickers added (their images still to download).
+    pub favorite_stickers: usize,
+    /// Hidden sticker packs added.
+    pub hidden_sticker_packs: usize,
     /// The account's privacy settings, when the backup has them.
     pub settings: Option<crate::AccountSettings>,
 }
@@ -580,6 +584,8 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
     // Who's in our address book (Desktop's `isInSystemContacts`).
     let mut system: Vec<String> = Vec::new();
     let mut imported = Imported::default();
+    let mut favorites: Vec<langis_store::ImportedFavorite> = Vec::new();
+    let mut hidden_packs: Vec<(String, String)> = Vec::new();
     // Chat colors (Desktop's `#fromCustomChatColors` and `#fromChatStyle`):
     // custom colors by their backup id, then the default and each chat's.
     let mut colors = langis_store::ChatColors::default();
@@ -705,6 +711,11 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
             Some(proto::frame::Item::InstalledStickerPack(pack)) => {
                 imported.sticker_packs.push((pack.packId.clone(), pack.packKey.clone()));
             }
+            Some(proto::frame::Item::FavoriteStickerList(list)) => favorites.extend(favorite_stickers(&list)),
+            Some(proto::frame::Item::HiddenStickerPack(pack)) => match sticker_pack_ids(&pack.packId, &pack.packKey) {
+                Some(ids) => hidden_packs.push(ids),
+                None => tracing::warn!("skipping a hidden sticker pack without a valid id and key"),
+            },
             Some(proto::frame::Item::ChatItem(item)) => {
                 imported.messages +=
                     usize::from(import_item(db, &item, &people, &chats, me, now, &mut imported).await?);
@@ -719,11 +730,42 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
     db.apply_profile_sharing(&sharing).await?;
     db.add_system_contacts(&system).await?;
     db.set_story_send_modes(&modes).await?;
+    imported.favorite_stickers = db.import_favorite_stickers(&favorites).await?;
+    imported.hidden_sticker_packs = db.import_hidden_sticker_packs(&hidden_packs).await?;
     if !pinned.is_empty() {
         pinned.sort_by_key(|(order, _)| *order);
         db.replace_pinned(&pinned.into_iter().map(|(_, id)| id).collect::<Vec<_>>()).await?;
     }
     Ok(imported)
+}
+
+/// A sticker pack's id and key as hex, when they're the right lengths
+/// (Desktop's `STICKERPACK_ID_BYTE_LEN` and `STICKERPACK_KEY_BYTE_LEN`).
+fn sticker_pack_ids(id: &[u8], key: &[u8]) -> Option<(String, String)> {
+    (id.len() == 16 && key.len() == 32).then(|| (hex::encode(id), hex::encode(key)))
+}
+
+/// A backup's favorite stickers (Desktop's `fromFavoriteStickerList`,
+/// commit e345f3932): one without a valid pack id and key is skipped; the
+/// store stops at its limit (500).
+fn favorite_stickers(list: &proto::FavoriteStickerList) -> Vec<langis_store::ImportedFavorite> {
+    let mut skipped = 0;
+    let favorites: Vec<_> = list
+        .favoriteSticker
+        .iter()
+        .filter_map(|f| {
+            let Some((pack_id, pack_key)) = sticker_pack_ids(&f.packId, &f.packKey) else {
+                skipped += 1;
+                return None;
+            };
+            let favorited_at = i64::try_from(f.favoritedAtTimestamp).unwrap_or(i64::MAX);
+            Some(langis_store::ImportedFavorite { pack_id, pack_key, sticker_id: f.stickerId, favorited_at })
+        })
+        .collect();
+    if skipped > 0 {
+        tracing::warn!(skipped, "favorite stickers without a valid pack id and key skipped");
+    }
+    favorites
 }
 
 /// A backup's chat folder (Desktop's `#fromChatFolder`): one without a
@@ -1567,6 +1609,21 @@ mod tests {
         pack.packId = vec![0xab; 16];
         pack.packKey = vec![0xcd; 32];
         push(proto::Frame { item: Some(proto::frame::Item::InstalledStickerPack(pack)), ..Default::default() });
+        // A hidden pack, and favorites (one with a bad key, left out).
+        let mut hidden = proto::StickerPack::new();
+        hidden.packId = vec![0xee; 16];
+        hidden.packKey = vec![0xef; 32];
+        push(proto::Frame { item: Some(proto::frame::Item::HiddenStickerPack(hidden)), ..Default::default() });
+        let mut favorites = proto::FavoriteStickerList::new();
+        for (key, id) in [(vec![0xcd; 32], 4), (vec![0xcd; 3], 5)] {
+            let mut f = proto::favorite_sticker_list::FavoriteSticker::new();
+            f.packId = vec![0xab; 16];
+            f.packKey = key;
+            f.stickerId = id;
+            f.favoritedAtTimestamp = 1_234;
+            favorites.favoriteSticker.push(f);
+        }
+        push(proto::Frame { item: Some(proto::frame::Item::FavoriteStickerList(favorites)), ..Default::default() });
         // Our reply to Alice, quoting her, with her reaction and a photo
         // still on the transit tier.
         let mut standard = proto::StandardMessage::new();
@@ -1688,6 +1745,12 @@ mod tests {
         assert_eq!(seen.last(), Some(&(plain.len() as u64)));
         assert_eq!((imported.chats, imported.messages), (4, 7));
         assert_eq!(imported.sticker_packs, vec![(vec![0xab; 16], vec![0xcd; 32])]);
+        // Favorite stickers and hidden packs (Desktop commits e345f3932,
+        // 5edf85d87), as Storage Service has them.
+        assert_eq!((imported.favorite_stickers, imported.hidden_sticker_packs), (1, 1));
+        let favorite = &db.favorite_stickers().await.unwrap()[0];
+        assert_eq!((favorite.pack_id.as_str(), favorite.sticker_id, favorite.favorited_at, favorite.needs_sync), (&*"ab".repeat(16), 4, Some(1_234), false));
+        assert_eq!(db.hidden_sticker_pack_ids().await.unwrap(), vec!["ee".repeat(16)]);
         // Each setting the backup leaves off is off, as Desktop imports them.
         let settings = imported.settings.clone().unwrap();
         let on = |s: crate::AccountSetting| settings.flags[&s];

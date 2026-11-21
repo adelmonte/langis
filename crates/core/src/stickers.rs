@@ -82,7 +82,8 @@ pub struct StickerPackSummary {
 
 /// What Desktop's sticker manager lists: "My Stickers" in order, the
 /// Signal Artist Series, and "Shared With You" (received packs, installed
-/// ones too, newest first).
+/// ones too, newest first, less the ones hidden with
+/// `Command::SetStickerPackHidden`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StickerManagerView {
     pub installed: Vec<StickerPackSummary>,
