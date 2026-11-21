@@ -76,6 +76,11 @@ Changes:
   username a `https://signal.me/#eu/…` link holds through
   libsignal-service's `look_up_username_link`, for opening those links
   (Desktop's `resolveUsernameByLinkBase64`). Upstream has no call for it.
+- `src/manager/registered.rs`: `Manager::send_message_sealed` is
+  `send_message` saying whether it went by sealed sender, and
+  `GroupSendSummary::sealed` lists the group members a group message
+  reached that way (libsignal-service's `SentMessage::unidentified`), for
+  Desktop's unidentified-delivery icon in message details.
 
 - `src/model/messages.rs`, `src/manager/registered.rs`:
   `Received::DecryptionError` carries the sender's device and is only for

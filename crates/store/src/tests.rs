@@ -2958,6 +2958,10 @@ async fn sealed_sender_is_kept_per_message() {
     assert!(db.message(id).await.unwrap().unwrap().sealed_sender.is_empty());
     db.set_sealed_sender(id, &["alice".to_owned()]).await.unwrap();
     assert_eq!(db.message(id).await.unwrap().unwrap().sealed_sender, ["alice"]);
+    // A later send's adds to the list, once each.
+    db.add_sealed_sender(id, &["bob".to_owned(), "alice".to_owned()]).await.unwrap();
+    assert_eq!(db.message(id).await.unwrap().unwrap().sealed_sender, ["alice", "bob"]);
+    db.add_sealed_sender(-1, &["bob".to_owned()]).await.unwrap();
 }
 
 #[tokio::test]
@@ -3331,4 +3335,38 @@ fn unread_reminders_are_due_as_desktop_decides() {
         range("d:longest", 10 * day, 3 * day),
     ];
     assert_eq!(due_reminders(&ranges, now), vec![conv("d:longest"), conv("d:due")]);
+}
+
+#[tokio::test]
+async fn a_phone_number_chat_merges_into_its_account_chat() {
+    let db = test_db().await;
+    let (pni, aci) = (conv("d:PNI:p"), conv("d:a"));
+    assert_eq!(db.merge_conversation(&pni, &aci).await.unwrap(), None);
+    db.upsert_conversation(&pni, ConversationUpdate { phone: Some("+15550100".into()), expire_timer: Some(60), ..Default::default() })
+        .await
+        .unwrap();
+    db.insert_message(&outgoing("d:PNI:p", 10, "hi")).await.unwrap();
+    // No account chat yet: the number's chat becomes it, with its state.
+    assert_eq!(db.merge_conversation(&pni, &aci).await.unwrap(), Some((true, false)));
+    assert!(db.conversation(&pni).await.unwrap().is_none());
+    let chat = db.conversation(&aci).await.unwrap().unwrap();
+    assert_eq!((chat.phone.as_deref(), chat.expire_timer), (Some("+15550100"), 60));
+    assert_eq!(db.messages(&aci, None, 10).await.unwrap().len(), 1);
+    // Both had messages: both histories are in the account chat.
+    db.upsert_conversation(&pni, ConversationUpdate::default()).await.unwrap();
+    db.insert_message(&outgoing("d:PNI:p", 20, "again")).await.unwrap();
+    assert_eq!(db.merge_conversation(&pni, &aci).await.unwrap(), Some((true, true)));
+    let bodies: Vec<String> = db.messages(&aci, None, 10).await.unwrap().into_iter().map(|m| m.body).collect();
+    assert_eq!(bodies, ["hi", "again"]);
+    assert_eq!(db.conversation(&aci).await.unwrap().unwrap().last_message_preview.as_deref(), Some("again"));
+}
+
+#[tokio::test]
+async fn universal_timer_notices_are_found_per_chat() {
+    let db = test_db().await;
+    let chat = conv("d:a");
+    let id = db.insert_notice(&chat, 10, &Notice::UniversalTimer { seconds: 3600 }).await.unwrap().unwrap();
+    db.insert_notice(&chat, 11, &Notice::SessionEnded).await.unwrap();
+    assert_eq!(db.universal_timer_notices(&chat).await.unwrap(), [id]);
+    assert!(db.universal_timer_notices(&conv("d:b")).await.unwrap().is_empty());
 }

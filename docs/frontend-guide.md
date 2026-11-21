@@ -219,6 +219,30 @@ replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test
 for leaving them out of the people offered for a new chat or group.
 
+**Message details.** `db.send_states(id)` gives each recipient's status
+for Desktop's `MessageDetail`. `Message::sealed_sender` lists who it went
+to by sealed sender (our sends from here and from other devices, Desktop's
+`unidentifiedDeliveries`), or holds the author when an incoming message
+came sealed (`unidentifiedDeliveryReceived`). Desktop shows its
+unidentified-delivery icon on those rows only while the account setting
+`AccountSetting::SealedSenderIndicators` is on.
+
+**Notices made as things happen.** Besides those from transferred
+history, the core adds Desktop's live ones:
+`Notice::UniversalTimer { seconds }` ("The disappearing message time will
+be set to ... when you message them.") in a 1:1 chat with no messages and
+no timer while the account has a default timer, checked when the chat is
+opened (`Command::MarkRead`) and removed (`MessageRemoved`) once a message
+is sent or received there. A chat started with a phone number has the
+person's PNI as its id (`d:PNI:…`); when a PNI signature on their message
+or a Storage Service record ties it to their ACI, it moves into their ACI
+chat (`ConversationRemoved` for the old id, then `ConversationsChanged`),
+with `Notice::Merged` when both chats had messages, or
+`Notice::NumberIsTheirs` when only the number's chat was there and we
+had a session with it (not after a PNI signature, as Desktop). "Joined
+Signal" and GV1 migration notices come only from transferred history:
+Desktop makes no live ones either.
+
 **Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
 a contact row (`removeContact`): their chat's `removal_stage` becomes
 `JustNotification`, our profile is no longer shared with them, the chat

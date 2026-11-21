@@ -29,6 +29,7 @@ mod alerts;
 mod receipts;
 mod session_reset;
 mod settings;
+mod live_notices;
 mod share_contact;
 mod photos;
 
@@ -294,6 +295,9 @@ struct Delivery {
     identity: Vec<String>,
     /// The server wants a captcha before more sends (HTTP 428): its token.
     challenge: Option<String>,
+    /// Of `reached`, those it went to by sealed sender (Desktop's
+    /// `unidentifiedDeliveries`).
+    sealed: Vec<String>,
 }
 
 /// Why a send to someone failed.
@@ -367,9 +371,15 @@ impl Delivery {
         }
     }
 
-    fn record(&mut self, recipient: String, result: Result<(), SendFailure>) {
+    /// One recipient's result: `Ok(sealed)` when it reached them.
+    fn record(&mut self, recipient: String, result: Result<bool, SendFailure>) {
         match result {
-            Ok(()) => self.reached.push(recipient),
+            Ok(sealed) => {
+                if sealed {
+                    self.sealed.push(recipient.clone());
+                }
+                self.reached.push(recipient)
+            }
             Err(failure) if failure.unregistered => self.unregistered.push(recipient),
             Err(failure) => {
                 self.note(&failure);
@@ -1657,10 +1667,20 @@ impl Actor {
                     return;
                 }
                 drop(checks);
+                // Their PNI signature says which PNI is theirs: a chat we
+                // started with their number becomes theirs (Desktop's
+                // `maybeMergeContacts` with `fromPniSignature`).
+                if sender != self_aci && let Some(pni) = content.metadata.pni_verified {
+                    self.adopt_pni_chat(&pni.service_id_string(), &sender, true).await;
+                }
                 if sender != self_aci && let ContentBody::DataMessage(dm) = &content.body {
                     self.note_registration(std::slice::from_ref(&sender), &[]).await;
                     if dm.group_v2.is_none() {
                         self.contact_messaged(&ConversationId::direct(&sender)).await;
+                        // A message from them ends the default timer notice.
+                        if dm.body.is_some() || !dm.attachments.is_empty() || dm.sticker.is_some() || !dm.contact.is_empty() {
+                            self.remove_universal_timer_notices(&ConversationId::direct(&sender)).await;
+                        }
                     }
                 }
                 let ctx = MapContext { self_aci: &self_aci, now: now_millis() };
@@ -3093,6 +3113,14 @@ impl Actor {
             Ok(true) => self.emit(Event::ConversationsChanged),
             Ok(false) => {}
             Err(error) => self.error("failed to save archived and muted chats", error),
+        }
+        // A chat we started with someone's number (their PNI) becomes
+        // theirs once a record ties the PNI to them (Desktop's
+        // `mergeContactRecord`, through `maybeMergeContacts`).
+        for contact in &contacts {
+            if let Some(pni) = &contact.pni {
+                self.adopt_pni_chat(pni, &Aci::from(contact.aci).service_id_string(), contact.pni_signature_verified).await;
+            }
         }
         let mut store = self.store.clone();
         let mut names = Vec::new();
@@ -5031,6 +5059,9 @@ impl Actor {
     }
 
     async fn mark_read(self: Rc<Self>, conversation: ConversationId) {
+        // Opened: Desktop's `updateLastMessage` checks the default timer
+        // notice.
+        self.maybe_set_pending_universal_timer(&conversation).await;
         // Opening a chat marked unread clears that on every device.
         let marked = self.db.conversation(&conversation).await.ok().flatten().is_some_and(|c| c.marked_unread);
         if marked && let Some(manager) = self.manager() {
@@ -5455,6 +5486,9 @@ impl Actor {
     async fn record_delivery(&self, conversation: &ConversationId, id: i64, delivery: &Delivery) -> DeliveryStatus {
         let status = self.report(conversation, delivery);
         let summary = self.record_send_states(conversation, id, delivery).await.unwrap_or(status);
+        if let Err(error) = self.db.add_sealed_sender(id, &delivery.sealed).await {
+            warn!(%error, "couldn't keep who a message went to by sealed sender");
+        }
         // The server wants a captcha first: held until it's solved.
         match &delivery.challenge {
             Some(token) => self.hold_for_challenge(conversation, id, token).await,
@@ -5557,7 +5591,7 @@ impl Actor {
                 if only.is_some_and(|only| !only.contains(&id)) {
                     return delivery;
                 }
-                let result = manager.send_message(recipient, body, timestamp).await;
+                let result = manager.send_message_sealed(recipient, body, timestamp).await;
                 delivery.record(id, result.map_err(SendFailure::from));
             }
             (None, None) => return failed(format!("invalid conversation {conversation}")),
@@ -6086,6 +6120,9 @@ impl Actor {
         // From transferred history: no stored message, but its locator.
         if let Some(meta) = message.attachments.get(index).filter(|a| a.remote.is_some()) {
             if let Err(error) = self.download_remote(&manager, &message.conversation_id, message_id, index, meta).await {
+                if error.is::<crate::history::Cancelled>() {
+                    return;
+                }
                 let text = format!("{error:#}");
                 let permanent = text.contains("404") || text.to_lowercase().contains("not found");
                 self.emit(Event::AttachmentUnavailable { message_id, index, permanent });
@@ -6229,7 +6266,7 @@ impl Actor {
         if long_text.state != LongTextState::Downloading || long_text.retry_at.is_some() || attempts != long_text.attempts {
             set_state(LongTextState::Downloading, attempts, None).await;
         }
-        let bytes = match self.remote_bytes(manager, &long_text.remote, long_text.size).await {
+        let bytes = match self.remote_bytes(manager, &long_text.remote, long_text.size, &mut |_| true).await {
             Ok(bytes) => bytes,
             Err(error) => {
                 let failures = attempts + 1;
@@ -6375,13 +6412,20 @@ impl Actor {
     /// Desktop's `downloadAttachment` tries them
     /// (`ts/util/downloadAttachment.preload.ts`). A failure gives every
     /// tier's reason.
-    async fn remote_bytes(&self, manager: &SignalManager, remote: &RemoteAttachment, size: u64) -> anyhow::Result<Vec<u8>> {
+    async fn remote_bytes(
+        &self,
+        manager: &SignalManager,
+        remote: &RemoteAttachment,
+        size: u64,
+        progress: &mut dyn FnMut(u64) -> bool,
+    ) -> anyhow::Result<Vec<u8>> {
         let mut reasons = Vec::new();
         if crate::backup_media::media_parts(remote).is_some()
             && let Some(root) = crate::backup_media::BackupMedia::root_key(&self.db).await
         {
-            match self.backup_media.download(manager, &self.db, &root, remote, size).await {
+            match self.backup_media.download(manager, &self.db, &root, remote, size, progress).await {
                 Ok(bytes) => return Ok(bytes),
+                Err(error) if error.is::<crate::history::Cancelled>() => return Err(error),
                 Err(error) => {
                     debug!(error = %format!("{error:#}"), "backup tier download failed");
                     reasons.push(format!("from your backup: {error:#}"));
@@ -6389,7 +6433,8 @@ impl Actor {
             }
         }
         if remote.cdn_key.is_some() {
-            match crate::history::download_attachment(manager, remote, size).await {
+            match crate::history::download_attachment(manager, remote, size, progress).await {
+                Err(error) if error.is::<crate::history::Cancelled>() => return Err(error),
                 Ok(bytes) => return Ok(bytes),
                 Err(error) => reasons.push(format!("{error:#}")),
             }
@@ -6502,7 +6547,34 @@ impl Actor {
         if crate::remote_config().too_big_to_receive(meta.size) {
             anyhow::bail!("it's over Signal's receive limit");
         }
-        let bytes = self.remote_bytes(manager, remote, meta.size).await?;
+        // Progress for the frontend as for any other attachment (see
+        // `download`), at most every 250ms, and a stop when it's cancelled.
+        let size = meta.size;
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut progress = |received: u64| {
+            if self.cancelled_downloads.borrow().contains(&(message_id, index)) {
+                return false;
+            }
+            if last.elapsed() >= std::time::Duration::from_millis(250) {
+                last = std::time::Instant::now();
+                self.emit(Event::DownloadProgress { message_id, index, received, total: size });
+            }
+            true
+        };
+        let fetched = self.remote_bytes(manager, remote, size, &mut progress).await;
+        let cancelled = self.cancelled_downloads.borrow_mut().remove(&(message_id, index));
+        let bytes = match fetched {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                // A cancelled or failed download ends at 0.
+                self.emit(Event::DownloadProgress { message_id, index, received: 0, total: size });
+                if cancelled {
+                    info!(message_id, index, "attachment download cancelled");
+                    return Err(crate::history::Cancelled.into());
+                }
+                return Err(error);
+            }
+        };
         let pointer = AttachmentPointer {
             content_type: Some(meta.content_type.clone()),
             file_name: meta.file_name.clone(),

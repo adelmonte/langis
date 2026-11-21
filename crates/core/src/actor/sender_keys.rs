@@ -19,7 +19,7 @@ use crate::sender_keys::{
 const ENDORSEMENT_RETRY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 type GroupSendResult = Result<
-    Vec<(ServiceId, Result<(), presage::libsignal_service::sender::MessageSenderError>)>,
+    Vec<(ServiceId, Result<bool, presage::libsignal_service::sender::MessageSenderError>)>,
     presage::Error<<SqliteStore as presage::store::Store>::Error>,
 >;
 
@@ -46,7 +46,8 @@ impl Actor {
     /// `sendContentMessageToGroup`). With `only`, to just those members (a
     /// retry to the ones an earlier send missed, Desktop's partial send).
     /// Returns each recipient's result, as presage's
-    /// `send_message_to_group_members`; an `Err` means nobody got it.
+    /// `send_message_to_group_members`, `Ok(true)` for those it reached by
+    /// sealed sender; an `Err` means nobody got it.
     // The same error presage's own sends return.
     #[allow(clippy::result_large_err)]
     pub(super) async fn send_to_group(
@@ -75,7 +76,8 @@ impl Actor {
                 "group message sent"
             ),
         }
-        Ok(summary.results)
+        let sealed = summary.sealed;
+        Ok(summary.results.into_iter().map(|(recipient, result)| (recipient, result.map(|()| sealed.contains(&recipient)))).collect())
     }
 
     /// The group's send endorsements, fetched again (with the group) when

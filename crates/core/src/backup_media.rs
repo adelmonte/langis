@@ -405,10 +405,11 @@ impl BackupMedia {
         root: &BackupKey,
         remote: &RemoteAttachment,
         size: u64,
+        progress: &mut dyn FnMut(u64) -> bool,
     ) -> anyhow::Result<Vec<u8>> {
         let (hash, key) = media_parts(remote).context("not in the backup tier")?;
         let id = MediaId::new(root, &media_name(&hash, &key));
-        let data = self.fetch(manager, db, root, remote.media_tier_cdn, &id, download_limit(size, false)).await?;
+        let data = self.fetch(manager, db, root, remote.media_tier_cdn, &id, download_limit(size, false), progress).await?;
         let (root, remote) = (BackupKey(root.0), remote.clone());
         tokio::task::spawn_blocking(move || decrypt_media(&root, &remote, size, data)).await?
     }
@@ -424,7 +425,7 @@ impl BackupMedia {
     ) -> anyhow::Result<Vec<u8>> {
         let (hash, key) = media_parts(remote).context("not in the backup tier")?;
         let id = MediaId::new(root, &thumbnail_media_name(&media_name(&hash, &key)));
-        let data = self.fetch(manager, db, root, remote.media_tier_cdn, &id, download_limit(0, true)).await?;
+        let data = self.fetch(manager, db, root, remote.media_tier_cdn, &id, download_limit(0, true), &mut |_| true).await?;
         let (root, remote) = (BackupKey(root.0), remote.clone());
         tokio::task::spawn_blocking(move || decrypt_thumbnail(&root, &remote, data)).await?
     }
@@ -437,6 +438,7 @@ impl BackupMedia {
         cdn: Option<u32>,
         id: &MediaId,
         limit: u64,
+        progress: &mut dyn FnMut(u64) -> bool,
     ) -> anyhow::Result<Vec<u8>> {
         let access = self.access(manager, db, root, cdn).await?;
         let service = crate::storage::push_service(manager)?;
@@ -445,7 +447,7 @@ impl BackupMedia {
         for (name, value) in &access.headers {
             request = request.header(name, value);
         }
-        let mut response = request.send().await?;
+        let response = request.send().await?;
         match response.status().as_u16() {
             200 => {}
             // Desktop's `onCdnCredentialError`: fetch new ones next time.
@@ -456,14 +458,7 @@ impl BackupMedia {
             404 => bail!("it isn't in your backup"),
             status => bail!("the backup CDN answered {status}"),
         }
-        let mut data = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            data.extend_from_slice(&chunk);
-            if data.len() as u64 > limit {
-                bail!("the download is bigger than it should be");
-            }
-        }
-        Ok(data)
+        crate::history::read_body(response, limit, progress).await
     }
 
     /// Credentials, the CDN's read headers and the backup's directories,

@@ -42,12 +42,13 @@ impl Actor {
     /// Desktop's `maybeApplyUniversalTimer`: the first message we send in a
     /// 1:1 chat (Note to Self too, not the Signal chat) that has no timer
     /// and no message anyone wrote starts the default timer, as a timer
-    /// change they see. (Desktop also shows a notice in such a chat
-    /// beforehand; that isn't done here.)
+    /// change they see. The chat's default timer notice
+    /// (`maybe_set_pending_universal_timer`) goes.
     pub(super) async fn maybe_apply_universal_timer(&self, conversation: &ConversationId) {
         if conversation.as_direct().is_none() || conversation.is_signal() {
             return;
         }
+        self.remove_universal_timer_notices(conversation).await;
         let seconds = self.universal_expire_timer().await;
         if seconds == 0 {
             return;
