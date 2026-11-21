@@ -198,7 +198,9 @@ backend.send(Command::SendText {
 
 The message appears in the store at once with `status: Sending`, and each
 change (sent, delivered, read, failed) comes as `MessageChanged`. Files go
-with `SendImages` or `SendFile`, and replies, reactions, edits and deletes
+with `SendImages` or `SendFile` (photos in `SendImages` are scaled as
+Desktop's "Sent media quality" says: the `SETTING_SENT_MEDIA_QUALITY` row,
+`high` or unset for Standard), and replies, reactions, edits and deletes
 each have a command. `SendGif` sends a GIF from `SearchGifs` with an optional caption (mentions
 and formatting as `SendFile`'s). `Forward { message_ids, conversations, body }` copies
 messages to other chats; `body` is a single message's text as edited

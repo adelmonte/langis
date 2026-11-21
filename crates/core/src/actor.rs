@@ -5370,6 +5370,15 @@ impl Actor {
         self.enqueue(Outbound::Send { conversation, body: typing.into(), timestamp, message: None });
     }
 
+    /// Desktop's level for photos we send: the "Sent media quality"
+    /// setting, and for Standard the remote config by our number's country.
+    async fn media_quality(&self) -> media::MediaQuality {
+        let high = self.db.setting(crate::SETTING_SENT_MEDIA_QUALITY).await.ok().flatten().as_deref() == Some("high");
+        let phone = self.manager().map(|m| m.registration_data().phone_number.to_string());
+        let config = crate::remote_config::current();
+        media::MediaQuality::for_setting(high, config.value("desktop.mediaQuality.levels"), phone.as_deref())
+    }
+
     async fn image_optimization(&self) -> media::Optimization {
         let value = self.db.setting(crate::SETTING_IMAGE_OPTIMIZATION).await.ok().flatten();
         media::Optimization::from_setting(value.as_deref())
@@ -5974,7 +5983,14 @@ impl Actor {
             }
             let before = original.len();
             let level = self.image_optimization().await;
-            let prepared = tokio::task::spawn_blocking(move || media::prepare(&original, level)).await??;
+            let quality = self.media_quality().await;
+            let prepared = tokio::task::spawn_blocking(move || {
+                // Desktop's `autoScale`, then our lossless pass and metadata
+                // stripping on what's left.
+                let scaled = media::scale_to_level(&original, quality)?;
+                media::prepare(scaled.as_deref().unwrap_or(&original), level)
+            })
+            .await??;
             info!(before, after = prepared.bytes.len(), kind = prepared.content_type, "optimized image");
             tokio::fs::write(&path, &prepared.bytes).await?;
             let spec = AttachmentSpec {

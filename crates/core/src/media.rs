@@ -258,6 +258,100 @@ pub fn prepare(bytes: &[u8], level: Optimization) -> anyhow::Result<PreparedImag
     Ok(PreparedImage { bytes, content_type: kind.content_type(), extension: kind.extension(), width, height })
 }
 
+/// Desktop's sent media quality levels (`ts/util/scaleImageToLevel`):
+/// One and Two are "Standard" (Two in the countries the remote config's
+/// `desktop.mediaQuality.levels` names), Three is "High".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaQuality {
+    One,
+    Two,
+    Three,
+}
+
+impl MediaQuality {
+    /// (longest side, JPEG quality, target size, size kept as it is).
+    fn data(self) -> (u32, u8, usize, usize) {
+        const MIB: usize = 1024 * 1024;
+        match self {
+            Self::One => (1600, 70, MIB, MIB / 5),
+            Self::Two => (2048, 75, MIB * 3 / 2, MIB * 3 / 10),
+            Self::Three => (4096, 75, MIB * 3, MIB * 2 / 5),
+        }
+    }
+
+    /// Desktop's `getMediaQualityLevel`: "high" is Three; otherwise the
+    /// level `desktop.mediaQuality.levels` ("49:2,*:1") gives our number's
+    /// country calling code, else its `*`, else One.
+    pub fn for_setting(high: bool, levels: Option<&str>, e164: Option<&str>) -> Self {
+        if high {
+            return Self::Three;
+        }
+        let Some(levels) = levels else { return Self::One };
+        let map: std::collections::HashMap<&str, Self> = levels
+            .split(',')
+            .filter_map(|pair| {
+                let (code, level) = pair.trim().split_once(':')?;
+                Some((code.trim(), if level.trim() == "2" { Self::Two } else { Self::One }))
+            })
+            .collect();
+        let digits: String = e164.unwrap_or_default().chars().filter(char::is_ascii_digit).collect();
+        // A calling code is one to three digits; the longest listed wins.
+        (1..=3.min(digits.len()))
+            .rev()
+            .find_map(|n| map.get(&digits[..n]).copied())
+            .or_else(|| map.get("*").copied())
+            .unwrap_or(Self::One)
+    }
+}
+
+/// Desktop's `scaleImageToLevel` for a photo being sent: one at most the
+/// level's threshold is left as it is (`None`); otherwise it's redrawn as a
+/// JPEG at the level's quality, its longest side the largest of 3072, 2048,
+/// 1600, 1024 and 768 (within the level's limit) that comes in under the
+/// level's target size, else 512. Turned upright first, and a transparent
+/// picture on white. GIFs aren't scaled (Desktop's `canBeTranscoded`).
+pub fn scale_to_level(bytes: &[u8], level: MediaQuality) -> anyhow::Result<Option<Vec<u8>>> {
+    use image::{DynamicImage, ImageDecoder as _};
+    let (max_side, quality, target, threshold) = level.data();
+    if bytes.len() <= threshold || ImageKind::sniff(bytes) == Some(ImageKind::Gif) {
+        return Ok(None);
+    }
+    let size = imagesize::blob_size(bytes).map_err(|e| anyhow!("can't read image size: {e}"))?;
+    if (size.width as u64).saturating_mul(size.height as u64) > MAX_PIXELS {
+        bail!("image too large ({}x{})", size.width, size.height);
+    }
+    let mut decoder = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?.into_decoder()?;
+    let orientation = decoder.orientation()?;
+    let mut picture = DynamicImage::from_decoder(decoder)?;
+    picture.apply_orientation(orientation);
+    // Transparency onto white, as a JPEG has none.
+    let rgba = picture.to_rgba8();
+    let mut flat = image::RgbImage::new(rgba.width(), rgba.height());
+    for (out, px) in flat.pixels_mut().zip(rgba.pixels()) {
+        let a = u16::from(px[3]);
+        for c in 0..3 {
+            out[c] = ((u16::from(px[c]) * a + 255 * (255 - a)) / 255) as u8;
+        }
+    }
+    let flat = DynamicImage::ImageRgb8(flat);
+    let encode = |side: u32| -> anyhow::Result<Vec<u8>> {
+        let scaled = if flat.width().max(flat.height()) > side { flat.resize(side, side, image::imageops::FilterType::Triangle) } else { flat.clone() };
+        let mut out = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality).encode_image(&scaled)?;
+        Ok(out)
+    };
+    for side in [3072, 2048, 1600, 1024, 768] {
+        if max_side < side {
+            continue;
+        }
+        let jpeg = encode(side)?;
+        if jpeg.len() <= target {
+            return Ok(Some(jpeg));
+        }
+    }
+    Ok(Some(encode(512)?))
+}
+
 /// Drops a WebP's `EXIF` and `XMP ` chunks (which can hold GPS), clearing
 /// their flags in the `VP8X` header. Every other chunk is copied as is.
 fn strip_webp_metadata(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
@@ -691,5 +785,39 @@ mod tests {
     fn other_files_are_rejected() {
         assert!(prepare(b"%PDF-1.7", Optimization::Max).is_err());
         assert_eq!(ImageKind::sniff(b"GIF89a...."), Some(ImageKind::Gif));
+    }
+
+    #[test]
+    fn media_quality_levels_follow_desktops_choice() {
+        use super::MediaQuality as Q;
+        assert_eq!(Q::for_setting(true, Some("1:2"), Some("+15555550100")), Q::Three, "High");
+        assert_eq!(Q::for_setting(false, None, Some("+15555550100")), Q::One);
+        assert_eq!(Q::for_setting(false, Some("1:2,49:1"), Some("+15555550100")), Q::Two, "by calling code");
+        assert_eq!(Q::for_setting(false, Some("49:2"), Some("+4915112345678")), Q::Two);
+        assert_eq!(Q::for_setting(false, Some("49:2,*:1"), Some("+15555550100")), Q::One);
+        assert_eq!(Q::for_setting(false, Some("*:2"), None), Q::Two, "everyone else");
+    }
+
+    #[test]
+    fn photos_are_scaled_as_desktop_scales_them() {
+        use super::{MediaQuality, scale_to_level};
+        // A large noisy photo: too big for Standard's 1 MiB as it is.
+        let mut seed = 7u32;
+        let photo = image::RgbImage::from_fn(3000, 2000, |_, _| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            image::Rgb([(seed >> 16) as u8, (seed >> 8) as u8, seed as u8])
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        photo.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let png = png.into_inner();
+        let jpeg = scale_to_level(&png, MediaQuality::One).unwrap().expect("scaled");
+        assert!(jpeg.len() <= 1024 * 1024 || jpeg.len() < png.len() / 4, "{} bytes", jpeg.len());
+        let out = image::load_from_memory(&jpeg).unwrap();
+        assert!(out.width().max(out.height()) <= 1600, "Standard's longest side");
+        assert_eq!(super::ImageKind::sniff(&jpeg), Some(super::ImageKind::Jpeg));
+        // Small files and GIFs are left as they are.
+        let mut small = std::io::Cursor::new(Vec::new());
+        image::RgbImage::new(64, 64).write_to(&mut small, image::ImageFormat::Png).unwrap();
+        assert!(scale_to_level(&small.into_inner(), MediaQuality::One).unwrap().is_none());
     }
 }

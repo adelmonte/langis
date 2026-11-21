@@ -318,6 +318,11 @@ pub const SETTING_STORY_VIEW_RECEIPTS: &str = "story_view_receipts";
 /// `off`; see [`media::Optimization`]). Not a Signal setting.
 pub const SETTING_IMAGE_OPTIMIZATION: &str = "image_optimization";
 
+/// Settings key: Desktop's "Sent media quality", `high` or `standard`
+/// (unset is Standard): photos we send are scaled as Desktop's
+/// `scaleImageToLevel` scales them ([`media::scale_to_level`]).
+pub const SETTING_SENT_MEDIA_QUALITY: &str = "sent_media_quality";
+
 pub use link_preview::{LinkPreviewDraft, PreviewImage};
 
 /// Settings key: `"true"` when automatic key verification is off.
