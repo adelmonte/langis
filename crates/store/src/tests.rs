@@ -3207,3 +3207,29 @@ fn description_notices_kept_before_their_text_still_read() {
     let new = GroupNotice::Description { description: Some("Hikes on Saturdays".into()) };
     assert_eq!(serde_json::from_str::<GroupNotice>(&serde_json::to_string(&new).unwrap()).unwrap(), new);
 }
+
+#[tokio::test]
+async fn unread_reminders_remember_when_they_reminded() {
+    let db = test_db().await;
+    assert!(db.unread_reminded_at().await.unwrap().is_empty());
+    db.set_unread_reminded_at(&conv("g:aa"), 50).await.unwrap();
+    db.set_unread_reminded_at(&conv("d:b"), 70).await.unwrap();
+    db.set_setting("unread_reminded_atx", "1").await.unwrap();
+    let at = db.unread_reminded_at().await.unwrap();
+    assert_eq!(at.len(), 2);
+    assert_eq!((at[&conv("g:aa")], at[&conv("d:b")]), (50, 70));
+}
+
+#[test]
+fn unread_reminders_are_due_as_desktop_decides() {
+    let day = 24 * 60 * 60 * 1000;
+    let now = 100 * day;
+    let range = |id: &str, oldest: i64, newest: i64| UnreadRange { conversation: conv(id), oldest_unreminded: now - oldest, newest_unread: now - newest };
+    let ranges = [
+        range("d:recent", 2 * day, day),
+        range("d:old", 15 * day, 15 * day),
+        range("d:due", 4 * day, day),
+        range("d:longest", 10 * day, 3 * day),
+    ];
+    assert_eq!(due_reminders(&ranges, now), vec![conv("d:longest"), conv("d:due")]);
+}

@@ -9,6 +9,36 @@ use crate::{AppDb, ConversationId, Result};
 /// Desktop's `MAX_SENDERS_TO_SHOW`.
 const MAX_SENDERS: i64 = 5;
 
+const DAY: i64 = 24 * 60 * 60 * 1000;
+/// Desktop's `UNREAD_REMINDER_MIN_UNREAD_AGE`: how long unreminded unread
+/// messages wait before a reminder.
+pub const UNREAD_REMINDER_MIN_UNREAD_AGE: i64 = 3 * DAY;
+/// Desktop's `UNREAD_REMINDER_MIN_INTERVAL_BETWEEN_REMINDERS`.
+pub const UNREAD_REMINDER_MIN_INTERVAL: i64 = 3 * DAY;
+/// Desktop's `UNREAD_REMINDER_MAX_AGE`: no reminder for a chat whose newest
+/// unread message is older.
+pub const UNREAD_REMINDER_MAX_AGE: i64 = 14 * DAY;
+/// Desktop's `UNREAD_REMINDER_POLL_INTERVAL`, in millis.
+pub const UNREAD_REMINDER_POLL_INTERVAL: i64 = 60 * 60 * 1000;
+
+/// Settings key: when unread reminders started here (Desktop's
+/// `unreadRemindersEnabledAt`); only messages after it are reminded of.
+pub const UNREAD_REMINDERS_ENABLED_AT: &str = "unread_reminders_enabled_at";
+/// Settings key prefix, then a chat id: when we last reminded of it (Desktop's
+/// `lastUnreadReminderAt`, kept on this device).
+const UNREAD_REMINDED_AT: &str = "unread_reminded_at.";
+
+/// Desktop's `filterForConversationsDueReminder`: the chats due a reminder
+/// at `now`, those waiting longest first.
+pub fn due_reminders(ranges: &[UnreadRange], now: i64) -> Vec<ConversationId> {
+    let mut due: Vec<&UnreadRange> = ranges
+        .iter()
+        .filter(|r| r.newest_unread > now - UNREAD_REMINDER_MAX_AGE && r.oldest_unreminded < now - UNREAD_REMINDER_MIN_UNREAD_AGE)
+        .collect();
+    due.sort_by_key(|r| r.oldest_unreminded);
+    due.into_iter().map(|r| r.conversation.clone()).collect()
+}
+
 /// When a chat's unread messages since its last reminder came (unix millis).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadRange {
@@ -57,6 +87,22 @@ impl Filter {
 const UNREAD: &str = "conversation_id = ?2 AND is_read = 0 AND direction = 0 AND notice IS NULL";
 
 impl AppDb {
+    /// When we last reminded of each chat (unix millis).
+    pub async fn unread_reminded_at(&self) -> Result<std::collections::HashMap<ConversationId, i64>> {
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM settings WHERE key LIKE 'unread\\_reminded\\_at.%' ESCAPE '\\'")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(key, value)| Some((ConversationId(key.strip_prefix(UNREAD_REMINDED_AT)?.to_owned()), value.parse().ok()?)))
+            .collect())
+    }
+
+    /// Notes we reminded of `conversation` at `at`.
+    pub async fn set_unread_reminded_at(&self, conversation: &ConversationId, at: i64) -> Result<()> {
+        self.set_setting(&format!("{UNREAD_REMINDED_AT}{}", conversation.0), &at.to_string()).await
+    }
+
     /// Desktop's `getUnremindedUnreadMessageTimeRanges`: for each chat and
     /// when it was last reminded (or reminders started), when its unread
     /// messages since then came. Chats with none are left out.

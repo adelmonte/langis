@@ -2441,6 +2441,9 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 emit(Event::OwnProfileChanged);
                 emit(Event::UsernameLinkReset(Ok(())));
             }
+            Command::UnreadReminderShown { conversation } => {
+                let _ = db.set_unread_reminded_at(&conversation, now()).await;
+            }
             Command::EditChatColors(edit) => {
                 if let Ok(true) = db.edit_chat_colors(edit).await {
                     emit(Event::ChatColorsChanged);

@@ -855,6 +855,9 @@ pub enum Command {
     /// Desktop keeps them. Answered with `Event::ChatColorsChanged` when
     /// something changed; read them with `AppDb::chat_colors`.
     EditChatColors(langis_store::ChatColorEdit),
+    /// An `Event::UnreadReminder` was shown: the next one for that chat waits
+    /// three days and covers only messages after now.
+    UnreadReminderShown { conversation: ConversationId },
 }
 
 /// A per-chat setting kept in the Storage Service.
@@ -1426,6 +1429,11 @@ pub enum Event {
     ChatFoldersChanged,
     /// The chat colors changed: read them again.
     ChatColorsChanged,
+    /// Desktop's unread reminder: a muted chat has had unread messages for
+    /// days. Mention and reply counts are zeroed when that kind is off
+    /// there while muted. Show it as a notification and answer
+    /// `Command::UnreadReminderShown`; until then it comes again hourly.
+    UnreadReminder { conversation: ConversationId, reminder: langis_store::ReminderData },
     Error(String),
     Unlinked,
 }

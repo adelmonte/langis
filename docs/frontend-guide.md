@@ -192,6 +192,20 @@ for a muted chat, notify only a group's mention (`Event::Incoming`'s
 `mentions_me`) or reply to us (`replies_to_me`) whose kind is on, as
 Desktop's `maybeNotify` does.
 
+**Unread reminders.** Hourly, the core looks for Desktop's unread reminder
+(`ts/services/unreadReminders.preload.ts`): a muted, unarchived chat with
+unread reminders on (`ChatNotifyKind::UnreadReminders`), whose oldest
+unread message since its last reminder is over three days old and newest
+under fourteen, at most one reminder per chat every three days. Only
+messages after the first run count. It sends `Event::UnreadReminder {
+conversation, reminder }` for the chat waiting longest; `reminder`
+(`ReminderData`) has the counts and, as service ids, who wrote, mentioned
+us and replied to us, mention and reply counts zeroed when that kind is off
+there while muted. Show it as a notification (Desktop's wording is in
+`ts/util/unreadReminders.std.ts`) and answer `Command::UnreadReminderShown
+{ conversation }`; until you do, it comes again each hour. Notification
+profiles aren't checked.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified
