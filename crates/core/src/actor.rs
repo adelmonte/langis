@@ -815,6 +815,27 @@ impl Actor {
         self.manager.borrow().clone()
     }
 
+    /// What a Desktop backup needs from the account (`local_backup.rs`):
+    /// `None` without an account, or when the phone didn't give this
+    /// device the account entropy pool (at linking, or in a keys sync).
+    async fn backup_keys(&self) -> Option<crate::local_backup::AccountKeys> {
+        let manager = self.manager()?;
+        let pool = match self.store.fetch_account_entropy_pool().await {
+            Ok(pool) => pool?,
+            Err(error) => {
+                warn!(%error, "can't read the account entropy pool");
+                return None;
+            }
+        };
+        let data = manager.registration_data();
+        Some(crate::local_backup::AccountKeys {
+            aci: data.service_ids.aci(),
+            entropy_pool: pool.to_string(),
+            profile_key: data.profile_key().get_bytes(),
+            media_root_key: data.media_root_backup_key(),
+        })
+    }
+
     /// A timestamp for something we send: now, or just after the last one.
     fn next_timestamp(&self) -> i64 {
         let timestamp = now_millis().max(self.last_sent_at.get() + 1);
@@ -1030,6 +1051,15 @@ impl Actor {
                 Command::Link => self.link().await,
                 command @ (Command::RefreshBackupStatus { .. } | Command::LoadBackupMediaDownload | Command::BackupMediaDownload(_)) => {
                     self.backup_command(command).await
+                }
+                Command::LoadRecoveryKey
+                | Command::SetLocalBackupFolder { .. }
+                | Command::RecoveryKeyConfirmed
+                | Command::StartLocalBackup
+                | Command::CancelLocalBackup
+                | Command::DisableLocalBackups { .. } => {
+                    let keys = self.backup_keys().await;
+                    crate::local_backup::handle(&self.db, &self.config.data_dir, keys, &command, &self.events).await;
                 }
                 Command::ContinueLink { delete_data } => self.continue_link(delete_data).await,
                 Command::SendText { conversation, body, quote, preview, mentions, styles } => {
