@@ -28,6 +28,7 @@ mod alerts;
 mod receipts;
 mod session_reset;
 mod settings;
+mod live_notices;
 mod share_contact;
 mod photos;
 
@@ -1654,10 +1655,20 @@ impl Actor {
                     return;
                 }
                 drop(checks);
+                // Their PNI signature says which PNI is theirs: a chat we
+                // started with their number becomes theirs (Desktop's
+                // `maybeMergeContacts` with `fromPniSignature`).
+                if sender != self_aci && let Some(pni) = content.metadata.pni_verified {
+                    self.adopt_pni_chat(&pni.service_id_string(), &sender, true).await;
+                }
                 if sender != self_aci && let ContentBody::DataMessage(dm) = &content.body {
                     self.note_registration(std::slice::from_ref(&sender), &[]).await;
                     if dm.group_v2.is_none() {
                         self.contact_messaged(&ConversationId::direct(&sender)).await;
+                        // A message from them ends the default timer notice.
+                        if dm.body.is_some() || !dm.attachments.is_empty() || dm.sticker.is_some() || !dm.contact.is_empty() {
+                            self.remove_universal_timer_notices(&ConversationId::direct(&sender)).await;
+                        }
                     }
                 }
                 let ctx = MapContext { self_aci: &self_aci, now: now_millis() };
@@ -3088,6 +3099,14 @@ impl Actor {
             Ok(true) => self.emit(Event::ConversationsChanged),
             Ok(false) => {}
             Err(error) => self.error("failed to save archived and muted chats", error),
+        }
+        // A chat we started with someone's number (their PNI) becomes
+        // theirs once a record ties the PNI to them (Desktop's
+        // `mergeContactRecord`, through `maybeMergeContacts`).
+        for contact in &contacts {
+            if let Some(pni) = &contact.pni {
+                self.adopt_pni_chat(pni, &Aci::from(contact.aci).service_id_string(), contact.pni_signature_verified).await;
+            }
         }
         let mut store = self.store.clone();
         let mut names = Vec::new();
@@ -5026,6 +5045,9 @@ impl Actor {
     }
 
     async fn mark_read(self: Rc<Self>, conversation: ConversationId) {
+        // Opened: Desktop's `updateLastMessage` checks the default timer
+        // notice.
+        self.maybe_set_pending_universal_timer(&conversation).await;
         // Opening a chat marked unread clears that on every device.
         let marked = self.db.conversation(&conversation).await.ok().flatten().is_some_and(|c| c.marked_unread);
         if marked && let Some(manager) = self.manager() {

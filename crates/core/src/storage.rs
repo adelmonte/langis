@@ -69,6 +69,10 @@ pub(crate) struct StorageContact {
     pub unregistered_at: Option<i64>,
     /// We removed them (`hidden`, Desktop's `removalStage`).
     pub removed: bool,
+    /// Their PNI as a service id (`PNI:…`), when the record has it.
+    pub pni: Option<String>,
+    /// The PNI is known from their PNI signature (`pniSignatureVerified`).
+    pub pni_signature_verified: bool,
 }
 
 /// What we read from the Storage Service.
@@ -1760,6 +1764,12 @@ fn record_aci(record: &ContactRecord) -> Option<Uuid> {
     (!aci.is_nil() && aci.to_string() != langis_store::SIGNAL_ACI).then_some(aci)
 }
 
+/// A contact record's PNI (`pniBinary`, else `pni`), as a service id.
+fn record_pni(record: &ContactRecord) -> Option<String> {
+    let pni = if record.pni_binary.len() == 16 { Uuid::from_slice(&record.pni_binary).ok()? } else { record.pni.parse().ok()? };
+    (!pni.is_nil()).then(|| presage::libsignal_service::protocol::Pni::from(pni).service_id_string())
+}
+
 /// What a contact record says about someone. Their name follows Desktop's
 /// `getTitleNoDefault` (`ts/util/getTitle.preload.ts`): the nickname we gave
 /// them, then their address-book name (its nickname, else given and family
@@ -1789,6 +1799,8 @@ pub(crate) fn from_record(record: &ContactRecord) -> Option<StorageContact> {
         username: Some(record.username.trim().to_owned()).filter(|u| !u.is_empty()),
         unregistered_at: (record.unregistered_at_timestamp != 0).then(|| clamp_millis(record.unregistered_at_timestamp)),
         removed: record.hidden,
+        pni: record_pni(record),
+        pni_signature_verified: record.pni_signature_verified,
     })
 }
 
@@ -1811,6 +1823,18 @@ mod tests {
     use super::*;
 
     const ACI: &str = "6b1a2b3c-0000-4000-8000-000000000001";
+
+    #[test]
+    fn a_contact_records_pni_is_read_binary_first() {
+        let pni = "6b1a2b3c-0000-4000-8000-000000000002";
+        let record = ContactRecord { aci: ACI.into(), pni: pni.into(), pni_signature_verified: true, ..Default::default() };
+        let c = from_record(&record).unwrap();
+        assert_eq!(c.pni.as_deref(), Some("PNI:6b1a2b3c-0000-4000-8000-000000000002"));
+        assert!(c.pni_signature_verified);
+        let binary = ContactRecord { pni_binary: Uuid::parse_str(pni).unwrap().as_bytes().to_vec(), pni: "junk".into(), ..record };
+        assert_eq!(from_record(&binary).unwrap().pni, c.pni);
+        assert_eq!(from_record(&ContactRecord { aci: ACI.into(), ..Default::default() }).unwrap().pni, None);
+    }
 
     #[test]
     fn name_precedence_matches_signal() {

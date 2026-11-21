@@ -852,6 +852,10 @@ pub enum Notice {
     /// Desktop's `verified-change`: we marked our safety number with `who`
     /// verified (or not), here (`local`) or on another device.
     Verified { who: String, verified: bool, local: bool },
+    /// Desktop's `universal-timer-notification`: a new 1:1 chat that will
+    /// get the account's default timer (`seconds`) when we message them.
+    /// It goes once a message is sent or received.
+    UniversalTimer { seconds: u32 },
 }
 
 /// A group change's `by` when no one's known to have made it (transferred
@@ -2701,6 +2705,72 @@ impl AppDb {
 
     /// Whether a chat has any message someone wrote, not only notices
     /// (Desktop's `hasUserInitiatedMessages`).
+    /// The chat's pending default timer notices ([`Notice::UniversalTimer`]).
+    pub async fn universal_timer_notices(&self, conversation: &ConversationId) -> Result<Vec<i64>> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM messages WHERE conversation_id = ? AND author_key = 'notice' \
+               AND json_extract(notice, '$.type') = 'universal_timer'",
+        )
+        .bind(&conversation.0)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// Moves the chat `obsolete` into `current` (Desktop's
+    /// `combineConversations`, `ts/ConversationController.preload.ts`): its
+    /// messages and pins, and when `current` had no row yet, its phone
+    /// number, draft, timer and chat list state. `obsolete` is removed.
+    /// Returns whether each had messages anyone wrote (Desktop's
+    /// `messageCount`), `(obsolete, current)`, or `None` when there's no
+    /// `obsolete` chat.
+    pub async fn merge_conversation(&self, obsolete: &ConversationId, current: &ConversationId) -> Result<Option<(bool, bool)>> {
+        let mut tx = self.write().await?;
+        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM conversations WHERE id = ?").bind(&obsolete.0).fetch_optional(&mut *tx).await?;
+        if exists.is_none() || obsolete == current {
+            return Ok(None);
+        }
+        let had = |id: &ConversationId| {
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ? AND notice IS NULL)").bind(id.0.clone())
+        };
+        let obsolete_had = had(obsolete).fetch_one(&mut *tx).await?;
+        let current_had = had(current).fetch_one(&mut *tx).await?;
+        let current_existed: Option<i64> = sqlx::query_scalar("SELECT 1 FROM conversations WHERE id = ?").bind(&current.0).fetch_optional(&mut *tx).await?;
+        ensure_conversation(&mut tx, current).await?;
+        if current_existed.is_none() {
+            sqlx::query(
+                "UPDATE conversations SET (phone, draft, expire_timer, expire_timer_version, pinned, pin_order, muted_until, archived) = \
+                    (SELECT phone, draft, expire_timer, expire_timer_version, pinned, pin_order, muted_until, archived FROM conversations WHERE id = ?1) \
+                 WHERE id = ?2",
+            )
+            .bind(&obsolete.0)
+            .bind(&current.0)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("UPDATE conversations SET phone = COALESCE(phone, (SELECT phone FROM conversations WHERE id = ?1)) WHERE id = ?2")
+                .bind(&obsolete.0)
+                .bind(&current.0)
+                .execute(&mut *tx)
+                .await?;
+        }
+        // A message the same author sent at the same time in both stays once.
+        sqlx::query("UPDATE OR IGNORE messages SET conversation_id = ?2 WHERE conversation_id = ?1").bind(&obsolete.0).bind(&current.0).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM messages WHERE conversation_id = ?").bind(&obsolete.0).execute(&mut *tx).await?;
+        sqlx::query("UPDATE OR IGNORE pinned_messages SET conversation_id = ?2 WHERE conversation_id = ?1").bind(&obsolete.0).bind(&current.0).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM pinned_messages WHERE conversation_id = ?").bind(&obsolete.0).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM conversations WHERE id = ?").bind(&obsolete.0).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM settings WHERE key = ?").bind(format!("{DRAFT_STYLES}{}", obsolete.0)).execute(&mut *tx).await?;
+        sqlx::query(
+            "UPDATE conversations SET unread_count = (SELECT COUNT(*) FROM messages WHERE conversation_id = ?1 AND is_read = 0) WHERE id = ?1",
+        )
+        .bind(&current.0)
+        .execute(&mut *tx)
+        .await?;
+        refresh_preview(&mut tx, current).await?;
+        tx.commit().await?;
+        Ok(Some((obsolete_had, current_had)))
+    }
+
     pub async fn has_user_messages(&self, conversation: &ConversationId) -> Result<bool> {
         Ok(sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ? AND notice IS NULL)")
             .bind(&conversation.0)
