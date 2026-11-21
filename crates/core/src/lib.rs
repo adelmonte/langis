@@ -38,6 +38,7 @@ pub mod deletes;
 pub mod edits;
 pub mod long_text;
 pub mod release_notes;
+pub mod call_survey;
 pub mod megaphones;
 pub mod remote_config;
 pub mod video;
@@ -233,6 +234,17 @@ impl AccountSetting {
     /// `DEFAULT_SHOW_UNREAD_REMINDERS`).
     pub fn default_on(self) -> bool {
         matches!(self, Self::ReactionNotifications | Self::NotifyMentionsIfMuted | Self::NotifyRepliesIfMuted)
+    }
+
+    /// The account setting a chat's own `kind` falls back to.
+    pub fn for_chat(kind: langis_store::ChatNotifyKind) -> Self {
+        use langis_store::ChatNotifyKind as K;
+        match kind {
+            K::Calls => Self::NotifyCallsIfMuted,
+            K::Mentions => Self::NotifyMentionsIfMuted,
+            K::Replies => Self::NotifyRepliesIfMuted,
+            K::UnreadReminders => Self::ShowUnreadReminders,
+        }
     }
 
     /// Whether it's on, from its stored value.
@@ -868,6 +880,9 @@ pub enum Command {
     /// New profiles take an id from `new_notification_profile_id`.
     /// Answered with `Event::NotificationProfilesChanged`.
     EditNotificationProfiles(langis_store::NotificationProfileEdit),
+    /// An `Event::UnreadReminder` was shown: the next one for that chat waits
+    /// three days and covers only messages after now.
+    UnreadReminderShown { conversation: ConversationId },
 }
 
 /// A per-chat setting kept in the Storage Service.
@@ -886,6 +901,10 @@ pub enum ChatChange {
     /// A person removed from our contacts (`true`, Desktop's `removeContact`)
     /// or restored. People only.
     Removed(bool),
+    /// One of its "While muted" settings or its unread reminders
+    /// (`langis_store::ChatNotify`); `None` follows the account setting
+    /// ([`AccountSetting::for_chat`]). Mentions and replies are for groups.
+    Notify(langis_store::ChatNotifyKind, Option<bool>),
 }
 
 /// A story list (Desktop's distribution list), from Storage Service.
@@ -1454,6 +1473,15 @@ pub enum Event {
     /// The notification profiles or the override changed, here or on
     /// another device: read `AppDb::notification_profile_state` again.
     NotificationProfilesChanged,
+    /// Desktop's unread reminder: a muted chat has had unread messages for
+    /// days. Mention and reply counts are zeroed when that kind is off
+    /// there while muted. Show it as a notification and answer
+    /// `Command::UnreadReminderShown`; until then it comes again hourly.
+    UnreadReminder { conversation: ConversationId, reminder: langis_store::ReminderData },
+    /// Ask "How was your call?" about a call that just ended (Desktop's
+    /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
+    /// Signal's gRPC call quality service, which langis can't reach.
+    CallQualitySurvey(call_survey::CallSurvey),
     Error(String),
     Unlinked,
 }

@@ -1775,6 +1775,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                         other => other.map(|_| ()),
                     },
                     crate::ChatChange::Removed(false) => db.restore_contact(&conversation).await.map(|_| ()),
+                    crate::ChatChange::Notify(kind, value) => db.set_chat_notify(&conversation, kind, value).await,
                     crate::ChatChange::HideStory(on) => {
                         let done = db.set_story_hidden(&conversation, on).await;
                         let _ = events.unbounded_send(Event::StorySettingsChanged);
@@ -2454,6 +2455,9 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 demo_save_username(&db, username.as_deref(), Some(link)).await;
                 emit(Event::OwnProfileChanged);
                 emit(Event::UsernameLinkReset(Ok(())));
+            }
+            Command::UnreadReminderShown { conversation } => {
+                let _ = db.set_unread_reminded_at(&conversation, now()).await;
             }
             Command::EditChatColors(edit) => {
                 if let Ok(true) = db.edit_chat_colors(edit).await {

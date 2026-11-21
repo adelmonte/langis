@@ -507,6 +507,9 @@ pub(crate) enum ChatEdit {
     /// A person removed (`hidden`, Desktop's `removalStage`); groups have
     /// none.
     Hidden(bool),
+    /// An `OptionalBool` "While muted" or `showUnreadReminders` field;
+    /// contact records have only calls and unread reminders.
+    Notify(langis_store::ChatNotifyKind, Option<bool>),
 }
 
 impl ChatEdit {
@@ -523,6 +526,18 @@ impl ChatEdit {
             ChatEdit::StorySendMode(mode) => (None, 10, mode.to_wire() as u64),
             ChatEdit::DontNotifyMentions(on) => (None, 7, u64::from(on)),
             ChatEdit::Hidden(on) => (Some(20), 0, u64::from(on)),
+            // Desktop's protos/SignalStorage.proto; OptionalBool: ENABLED = 1,
+            // DISABLED = 2, unset 0.
+            ChatEdit::Notify(kind, value) => {
+                use langis_store::ChatNotifyKind as K;
+                let value = value.map_or(0, |on| if on { 1 } else { 2 });
+                match kind {
+                    K::Calls => (Some(28), 14, value),
+                    K::Mentions => (None, 15, value),
+                    K::Replies => (None, 16, value),
+                    K::UnreadReminders => (Some(29), 17, value),
+                }
+            }
         };
         if group && matches!(self, ChatEdit::Hidden(_)) {
             return None;
@@ -1690,7 +1705,21 @@ fn contact_chat(record: &ContactRecord) -> Option<ChatState> {
         marked_unread: record.marked_unread,
         blocked: record.blocked,
         dont_notify_mentions: false,
+        notify: langis_store::ChatNotify {
+            calls: optional_bool(record.notify_for_calls_if_muted()),
+            unread_reminders: optional_bool(record.show_unread_reminders()),
+            ..Default::default()
+        },
     })
+}
+
+/// A record's `OptionalBool`; unset is `None`.
+fn optional_bool(value: presage::proto::OptionalBool) -> Option<bool> {
+    match value {
+        presage::proto::OptionalBool::Enabled => Some(true),
+        presage::proto::OptionalBool::Disabled => Some(false),
+        presage::proto::OptionalBool::Unset => None,
+    }
 }
 
 fn group_chat(record: &GroupV2Record) -> Option<ChatState> {
@@ -1701,6 +1730,16 @@ fn group_chat(record: &GroupV2Record) -> Option<ChatState> {
         marked_unread: record.marked_unread,
         blocked: record.blocked,
         dont_notify_mentions: record.dont_notify_for_mentions_if_muted,
+        // Desktop's `mergeGroupV2Record`.
+        notify: langis_store::ChatNotify {
+            calls: optional_bool(record.notify_for_calls_if_muted()),
+            mentions: langis_store::resolve_legacy_mentions(
+                record.dont_notify_for_mentions_if_muted,
+                optional_bool(record.notify_for_mentions_if_muted()),
+            ),
+            replies: optional_bool(record.notify_for_replies_if_muted()),
+            unread_reminders: optional_bool(record.show_unread_reminders()),
+        },
     })
 }
 
@@ -2075,6 +2114,36 @@ mod tests {
         let Some(Record::Contact(c)) = StorageRecord::decode(unarchived.as_slice()).unwrap().record else { panic!() };
         assert!(!c.archived);
         assert_eq!(edit_chat_record(&unarchived, ChatEdit::Archived(false)).unwrap(), None);
+    }
+
+    #[test]
+    fn while_muted_edits_write_optional_bools() {
+        use langis_store::ChatNotifyKind as K;
+        let group = StorageRecord { record: Some(Record::GroupV2(GroupV2Record { master_key: vec![1; 32], ..Default::default() })) };
+        let edits = [
+            ChatEdit::Notify(K::Calls, Some(true)),
+            ChatEdit::Notify(K::Mentions, Some(false)),
+            ChatEdit::DontNotifyMentions(true),
+            ChatEdit::Notify(K::Replies, Some(false)),
+            ChatEdit::Notify(K::UnreadReminders, Some(true)),
+        ];
+        let edited = edit_chat_record_all(&group.encode_to_vec(), &edits).unwrap().unwrap();
+        let Some(Record::GroupV2(g)) = StorageRecord::decode(edited.as_slice()).unwrap().record else { panic!() };
+        assert_eq!(
+            group_chat(&g).unwrap().notify,
+            langis_store::ChatNotify { calls: Some(true), mentions: Some(false), replies: Some(false), unread_reminders: Some(true) }
+        );
+        assert!(g.dont_notify_for_mentions_if_muted);
+        // Back to the account setting leaves the field out.
+        let unset = edit_chat_record(&edited, ChatEdit::Notify(K::Calls, None)).unwrap().unwrap();
+        let Some(Record::GroupV2(g)) = StorageRecord::decode(unset.as_slice()).unwrap().record else { panic!() };
+        assert_eq!(g.notify_for_calls_if_muted(), presage::proto::OptionalBool::Unset);
+        // A contact has calls and reminders, not mentions or replies.
+        let contact = StorageRecord { record: Some(Record::Contact(ContactRecord { aci: ACI.into(), ..Default::default() })) }.encode_to_vec();
+        let calls = edit_chat_record(&contact, ChatEdit::Notify(K::Calls, Some(true))).unwrap().unwrap();
+        let Some(Record::Contact(c)) = StorageRecord::decode(calls.as_slice()).unwrap().record else { panic!() };
+        assert_eq!(contact_chat(&c).unwrap().notify.calls, Some(true));
+        assert!(edit_chat_record(&contact, ChatEdit::Notify(K::Replies, Some(true))).is_err());
     }
 
     #[test]
@@ -2549,7 +2618,8 @@ mod tests {
                 muted_until: i64::MAX,
                 marked_unread: false,
                 blocked: false,
-                dont_notify_mentions: false
+                dont_notify_mentions: false,
+                notify: Default::default()
             })
         );
         let group = GroupV2Record { master_key: vec![1; 32], muted_until_timestamp: 5, dont_notify_for_mentions_if_muted: true, ..Default::default() };
@@ -2561,9 +2631,24 @@ mod tests {
                 muted_until: 5,
                 marked_unread: false,
                 blocked: false,
-                dont_notify_mentions: true
+                dont_notify_mentions: true,
+                notify: langis_store::ChatNotify { mentions: Some(false), ..Default::default() }
             })
         );
+        let group = GroupV2Record {
+            master_key: vec![1; 32],
+            notify_for_calls_if_muted: presage::proto::OptionalBool::Enabled.into(),
+            notify_for_mentions_if_muted: presage::proto::OptionalBool::Disabled.into(),
+            notify_for_replies_if_muted: presage::proto::OptionalBool::Disabled.into(),
+            show_unread_reminders: presage::proto::OptionalBool::Enabled.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            group_chat(&group).unwrap().notify,
+            langis_store::ChatNotify { calls: Some(true), mentions: Some(true), replies: Some(false), unread_reminders: Some(true) }
+        );
+        let contact = ContactRecord { aci: ACI.into(), show_unread_reminders: presage::proto::OptionalBool::Disabled.into(), ..Default::default() };
+        assert_eq!(contact_chat(&contact).unwrap().notify.unread_reminders, Some(false));
         assert_eq!(group_chat(&GroupV2Record { master_key: vec![1; 16], ..Default::default() }), None);
     }
 

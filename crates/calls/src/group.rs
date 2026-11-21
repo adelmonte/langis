@@ -122,7 +122,7 @@ pub enum GroupEvent {
     Peek { client_id: group_call::ClientId, peek: Peek },
     /// Answer to [`crate::Calls::peek_group_call`].
     PeekResult { request_id: u32, peek: Option<Peek> },
-    Ended { client_id: group_call::ClientId, reason: GroupEnd },
+    Ended { client_id: group_call::ClientId, reason: GroupEnd, summary: crate::Summary },
     /// A ring for a group call: `group_id` is the group's identifier.
     Ring { group_id: Vec<u8>, ring_id: i64, sender: Vec<u8>, ring: Ring },
     /// Reactions sent in the call since the last, oldest first: who sent

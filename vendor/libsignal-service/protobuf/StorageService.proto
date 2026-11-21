@@ -148,7 +148,8 @@ message ContactRecord {
   optional AvatarColor avatarColor      = 24;
   bytes         aciBinary               = 25; // 16-byte UUID
   bytes         pniBinary               = 26; // 16-byte UUID
-  // Next ID: 27
+  OptionalBool  notifyForCallsIfMuted   = 28; // If unset, use the default settings
+  OptionalBool  showUnreadReminders     = 29; // If unset, use the default settings
 }
 
 message GroupV1Record {
@@ -179,6 +180,10 @@ message GroupV2Record {
   StorySendMode storySendMode                = 10;
   optional AvatarColor avatarColor           = 11;
   bytes         verifiedNameHash             = 12; // SHA-256 of UTF-8 encoded decrypted group title that was last verified
+  OptionalBool  notifyForCallsIfMuted        = 14; // If unset, use the default settings
+  OptionalBool  notifyForMentionsIfMuted     = 15; // If unset, use the default settings
+  OptionalBool  notifyForRepliesIfMuted      = 16; // If unset, use the default settings
+  OptionalBool  showUnreadReminders          = 17; // If unset, use the default settings
 }
 
 message Payments {

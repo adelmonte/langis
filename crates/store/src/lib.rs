@@ -159,6 +159,8 @@ pub struct Conversation {
     /// While muted, mentions don't notify either (Desktop's
     /// `dontNotifyForMentionsIfMuted`, a group's "Mentions: Don't notify").
     pub dont_notify_mentions: bool,
+    /// Its own "While muted" and unread reminder settings.
+    pub notify: ChatNotify,
     /// Unix millis it was blocked, when that happened here or was synced.
     pub blocked_at: Option<i64>,
     /// A person's profile About, its emoji first (Desktop's `about` and
@@ -1010,6 +1012,68 @@ pub struct ChatState {
     pub blocked: bool,
     /// A group's `dontNotifyForMentionsIfMuted` (contacts have none).
     pub dont_notify_mentions: bool,
+    /// Its "While muted" and unread reminder settings; `mentions` already
+    /// reconciled with `dont_notify_mentions` ([`resolve_legacy_mentions`]).
+    pub notify: ChatNotify,
+}
+
+/// A chat's own notification settings while it's muted, and its unread
+/// reminders (Desktop's `notifyForCallsIfMuted`, `notifyForMentionsIfMuted`,
+/// `notifyForRepliesIfMuted`, `showUnreadReminders`). `None` follows the
+/// account's setting. Mentions and replies only apply to groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChatNotify {
+    pub calls: Option<bool>,
+    pub mentions: Option<bool>,
+    pub replies: Option<bool>,
+    pub unread_reminders: Option<bool>,
+}
+
+/// One of [`ChatNotify`]'s settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChatNotifyKind {
+    Calls,
+    Mentions,
+    Replies,
+    UnreadReminders,
+}
+
+impl ChatNotifyKind {
+    pub const ALL: [ChatNotifyKind; 4] = [Self::Calls, Self::Mentions, Self::Replies, Self::UnreadReminders];
+
+    fn column(self) -> &'static str {
+        match self {
+            Self::Calls => "notify_calls_if_muted",
+            Self::Mentions => "notify_mentions_if_muted",
+            Self::Replies => "notify_replies_if_muted",
+            Self::UnreadReminders => "show_unread_reminders",
+        }
+    }
+}
+
+impl ChatNotify {
+    pub fn get(&self, kind: ChatNotifyKind) -> Option<bool> {
+        match kind {
+            ChatNotifyKind::Calls => self.calls,
+            ChatNotifyKind::Mentions => self.mentions,
+            ChatNotifyKind::Replies => self.replies,
+            ChatNotifyKind::UnreadReminders => self.unread_reminders,
+        }
+    }
+
+    /// Whether `kind` is on here, `account` deciding what this chat leaves
+    /// unset (Desktop's `getNotifyWhileMuted`, `getShowUnreadReminders`).
+    pub fn on(&self, kind: ChatNotifyKind, account: impl Fn(ChatNotifyKind) -> bool) -> bool {
+        self.get(kind).unwrap_or_else(|| account(kind))
+    }
+}
+
+/// Desktop's `resolveLegacyNotifyForMentionsIfMuted`: a record's old
+/// `dontNotifyForMentionsIfMuted` against its `notifyForMentionsIfMuted`.
+/// "Don't notify" wins; otherwise a set value means notify (an old client
+/// may have turned mentions back on and kept our stale value).
+pub fn resolve_legacy_mentions(dont_notify: bool, notify: Option<bool>) -> Option<bool> {
+    if dont_notify { Some(false) } else { notify.map(|_| true) }
 }
 
 /// Input for [`AppDb::insert_message`].
@@ -1263,7 +1327,7 @@ const CONVERSATION_COLUMNS: &str = "id, kind, title, phone, color, members, last
       WHERE m.conversation_id = conversations.id AND m.unread_poll_votes = 1) AS unread_poll_votes, \
      message_request, reported, added_by, \
      EXISTS (SELECT 1 FROM system_contacts s WHERE s.service_id = substr(conversations.id, 3)) AS system_contact, \
-     dont_notify_mentions, blocked_at, unregistered_at, removal_stage, \
+     dont_notify_mentions, notify_calls_if_muted, notify_mentions_if_muted, notify_replies_if_muted, show_unread_reminders, blocked_at, unregistered_at, removal_stage, \
      (SELECT TRIM(p.about_emoji || ' ' || p.about) FROM profiles p \
       WHERE p.service_id = substr(conversations.id, 3) AND conversations.kind = 'direct') AS about, \
      (removal_stage IS NULL AND (kind = 'note_to_self' OR id = 'd:11111111-1111-4111-8111-111111111111' OR message_request = 1 \
@@ -1493,6 +1557,12 @@ fn conversation_from_row(row: &SqliteRow) -> Result<Conversation> {
         added_by: row.try_get("added_by")?,
         system_contact: row.try_get("system_contact")?,
         dont_notify_mentions: row.try_get("dont_notify_mentions")?,
+        notify: ChatNotify {
+            calls: row.try_get("notify_calls_if_muted")?,
+            mentions: row.try_get("notify_mentions_if_muted")?,
+            replies: row.try_get("notify_replies_if_muted")?,
+            unread_reminders: row.try_get("show_unread_reminders")?,
+        },
         blocked_at: row.try_get("blocked_at")?,
         unregistered_at: row.try_get("unregistered_at")?,
         removal_stage: match row.try_get::<Option<i64>, _>("removal_stage")? {
@@ -2051,9 +2121,12 @@ impl AppDb {
         for state in states {
             changed += sqlx::query(
                 "UPDATE conversations SET archived = ?1, muted_until = ?2, marked_unread = ?3, blocked = ?4, dont_notify_mentions = ?6, \
-                   blocked_at = CASE WHEN ?4 THEN COALESCE(blocked_at, ?7) END \
+                   blocked_at = CASE WHEN ?4 THEN COALESCE(blocked_at, ?7) END, \
+                   notify_calls_if_muted = ?8, notify_mentions_if_muted = ?9, notify_replies_if_muted = ?10, show_unread_reminders = ?11 \
                  WHERE id = ?5 AND (archived IS NOT ?1 OR muted_until IS NOT ?2 \
-                   OR marked_unread IS NOT ?3 OR blocked IS NOT ?4 OR dont_notify_mentions IS NOT ?6)",
+                   OR marked_unread IS NOT ?3 OR blocked IS NOT ?4 OR dont_notify_mentions IS NOT ?6 \
+                   OR notify_calls_if_muted IS NOT ?8 OR notify_mentions_if_muted IS NOT ?9 \
+                   OR notify_replies_if_muted IS NOT ?10 OR show_unread_reminders IS NOT ?11)",
             )
             .bind(state.archived)
             .bind(state.muted_until)
@@ -2062,6 +2135,10 @@ impl AppDb {
             .bind(&state.id.0)
             .bind(state.dont_notify_mentions)
             .bind(now_millis())
+            .bind(state.notify.calls)
+            .bind(state.notify.mentions)
+            .bind(state.notify.replies)
+            .bind(state.notify.unread_reminders)
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -2213,9 +2290,27 @@ impl AppDb {
         Ok(changed)
     }
 
-    /// A chat's "Mentions" while muted: `true` is Don't notify.
+    /// A chat's "Mentions" while muted: `true` is Don't notify, `false`
+    /// follows the account setting.
     pub async fn set_dont_notify_mentions(&self, id: &ConversationId, on: bool) -> Result<()> {
-        self.set_flag(id, "dont_notify_mentions", on).await
+        self.set_chat_notify(id, ChatNotifyKind::Mentions, on.then_some(false)).await
+    }
+
+    /// Sets one of a chat's [`ChatNotify`] settings (`None` follows the
+    /// account's). Mentions keep `dont_notify_mentions` in step, as
+    /// Desktop writes both.
+    pub async fn set_chat_notify(&self, id: &ConversationId, kind: ChatNotifyKind, value: Option<bool>) -> Result<()> {
+        let sql = format!(
+            "UPDATE conversations SET {} = ?1, dont_notify_mentions = CASE WHEN ?2 THEN ?1 IS 0 ELSE dont_notify_mentions END WHERE id = ?3",
+            kind.column()
+        );
+        sqlx::query(AssertSqlSafe(sql))
+            .bind(value)
+            .bind(kind == ChatNotifyKind::Mentions)
+            .bind(&id.0)
+            .execute(&self.writer)
+            .await?;
+        Ok(())
     }
 
     /// Sets (or with `None` clears) a conversation's draft, unformatted.

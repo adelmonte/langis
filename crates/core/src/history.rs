@@ -647,7 +647,14 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
                 db.upsert_conversation(&id, update).await?;
                 let muted_until = chat.muteUntilMs.map_or(0, |m| i64::try_from(m).unwrap_or(i64::MAX));
                 // Applied after the messages: importing one would unarchive.
-                states.push(ChatState { id: id.clone(), archived: chat.archived, muted_until, marked_unread: chat.markedUnread, blocked, dont_notify_mentions: chat.dontNotifyForMentionsIfMuted });
+                // Desktop's backup import, `resolveLegacyNotifyForMentionsIfMuted`.
+                let notify = langis_store::ChatNotify {
+                    calls: chat.notifyForCallsIfMuted,
+                    mentions: langis_store::resolve_legacy_mentions(chat.dontNotifyForMentionsIfMuted, chat.notifyForMentionsIfMuted),
+                    replies: chat.notifyForRepliesIfMuted,
+                    unread_reminders: chat.showUnreadReminders,
+                };
+                states.push(ChatState { id: id.clone(), archived: chat.archived, muted_until, marked_unread: chat.markedUnread, blocked, dont_notify_mentions: chat.dontNotifyForMentionsIfMuted, notify });
                 if let Some(ms) = chat.expirationTimerMs.filter(|ms| *ms > 0) {
                     db.set_expire_timer(&id, (ms / 1000) as u32, chat.expireTimerVersion.max(1)).await?;
                 }

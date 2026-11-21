@@ -230,6 +230,43 @@ becomes when they message us, worded "You have removed this person in the
 past"). Accepting, sending them a message or `Removed(false)` restores
 them.
 
+`ChatChange::Notify(kind, value)` sets one of Desktop's per-chat "While
+muted" switches (calls; mentions and replies for groups) or its unread
+reminders, kept in `Conversation::notify` (`ChatNotify`). `None` follows
+the account setting `AccountSetting::for_chat(kind)`; use
+`ChatNotify::on(kind, ...)` with the account settings to decide. Mentions
+off also sets `dont_notify_mentions`. The core rings for a call in a
+muted chat only when calls are on there; message notifications are yours:
+for a muted chat, notify only a group's mention (`Event::Incoming`'s
+`mentions_me`) or reply to us (`replies_to_me`) whose kind is on, as
+Desktop's `maybeNotify` does.
+
+**Unread reminders.** Hourly, the core looks for Desktop's unread reminder
+(`ts/services/unreadReminders.preload.ts`): a muted, unarchived chat with
+unread reminders on (`ChatNotifyKind::UnreadReminders`), whose oldest
+unread message since its last reminder is over three days old and newest
+under fourteen, at most one reminder per chat every three days. Only
+messages after the first run count. It sends `Event::UnreadReminder {
+conversation, reminder }` for the chat waiting longest; `reminder`
+(`ReminderData`) has the counts and, as service ids, who wrote, mentioned
+us and replied to us, mention and reply counts zeroed when that kind is off
+there while muted. Show it as a notification (Desktop's wording is in
+`ts/util/unreadReminders.std.ts`) and answer `Command::UnreadReminderShown
+{ conversation }`; until you do, it comes again each hour. Notification
+profiles aren't checked.
+
+**Call quality survey.** After a call ends, `Event::CallQualitySurvey`
+(`call_survey::CallSurvey`: the chat, Desktop's call type, when it
+connected and ended, whether it failed) asks for Desktop's "How was your
+call?" dialog, as Desktop decides (`ts/util/callQualitySurvey.dom.ts`):
+only for calls RingRTC marks a survey candidate (it connected), at most
+daily, always for a failed call unless one was asked about within a day,
+else for the share of calls in the remote config's
+`desktop.callQualitySurveyPPM` for our number's country (1% without it).
+There's no command to submit it: Desktop sends the answers to Signal's
+gRPC `CallQuality` service over libsignal-net's chat connection, which
+langis doesn't have, so the answers stay with the frontend.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified

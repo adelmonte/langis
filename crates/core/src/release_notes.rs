@@ -119,7 +119,7 @@ pub fn for_us(countries: Option<&str>, e164: Option<&str>, aci: &str) -> bool {
 /// The share for our number's country. Country calling codes are
 /// prefix-free, so the entry whose code starts the number is its country's.
 /// With no number, only `*` applies.
-fn country_share(countries: &str, e164: Option<&str>) -> Option<u64> {
+pub(crate) fn country_share(countries: &str, e164: Option<&str>) -> Option<u64> {
     let digits = e164.map(|n| n.trim_start_matches('+'));
     let mut wildcard = None;
     for entry in countries.split(',') {

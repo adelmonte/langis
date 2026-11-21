@@ -90,11 +90,46 @@ pub enum State {
     Ringing,
     Connecting,
     Connected,
-    Ended(EndReason),
+    Ended(EndReason, Summary),
     /// RingRTC turned an offer down (it expired, or we were busy).
     Rejected,
     /// Nothing more will happen; the call is gone.
     Concluded,
+}
+
+/// What RingRTC's `CallSummary` says about a call that ended, for Desktop's
+/// call quality survey (`ts/util/callQualitySurvey.dom.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Summary {
+    /// RingRTC's `is_survey_candidate`: it connected, and the app didn't
+    /// drop it.
+    pub survey_candidate: bool,
+    /// RingRTC's end reason, as text (`ConnectionFailure`...).
+    pub end_reason: String,
+    /// When it connected and ended (unix millis); both the start when it
+    /// never connected.
+    pub started_at: i64,
+    pub ended_at: i64,
+}
+
+impl Summary {
+    /// Desktop's `isCallFailure`: it ended on a failure.
+    pub fn failed(&self) -> bool {
+        ["internalFailure", "signalingFailure", "connectionFailure", "iceFailedAfterConnected"]
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&self.end_reason))
+    }
+}
+
+impl From<&ringrtc::core::call_summary::CallSummary> for Summary {
+    fn from(summary: &ringrtc::core::call_summary::CallSummary) -> Self {
+        Self {
+            survey_candidate: summary.is_survey_candidate,
+            end_reason: summary.call_end_reason_text.clone(),
+            started_at: u64::from(summary.start_time) as i64,
+            ended_at: u64::from(summary.end_time) as i64,
+        }
+    }
 }
 
 /// Why a call ended.
@@ -280,7 +315,7 @@ impl CallStateHandler for Handler {
             CallState::Ringing => State::Ringing,
             CallState::Connecting => State::Connecting,
             CallState::Connected => State::Connected,
-            CallState::Ended(reason, _) => State::Ended(EndReason::from(&reason)),
+            CallState::Ended(reason, summary) => State::Ended(EndReason::from(&reason), Summary::from(&summary)),
             CallState::Rejected(_) => State::Rejected,
             CallState::Concluded => State::Concluded,
         };
@@ -335,7 +370,9 @@ impl GroupUpdateHandler for Handler {
             GroupUpdate::PeekResult { request_id, peek_result } => {
                 GroupEvent::PeekResult { request_id, peek: peek_result.as_ref().ok().map(Peek::from) }
             }
-            GroupUpdate::Ended(client_id, reason, _) => GroupEvent::Ended { client_id, reason: GroupEnd::from(&reason) },
+            GroupUpdate::Ended(client_id, reason, summary) => {
+                GroupEvent::Ended { client_id, reason: GroupEnd::from(&reason), summary: Summary::from(&summary) }
+            }
             GroupUpdate::Ring { group_id, ring_id, sender_id, update } => {
                 GroupEvent::Ring { group_id, ring_id: ring_id.into(), sender: sender_id, ring: update.into() }
             }
@@ -997,6 +1034,13 @@ pub fn offer_age(server_timestamp_ms: u64, now_ms: u64) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failures_are_desktops() {
+        let summary = |reason: &str| super::Summary { end_reason: reason.into(), ..Default::default() };
+        assert!(summary("ConnectionFailure").failed() && summary("IceFailedAfterConnected").failed());
+        assert!(!summary("LocalHangup").failed() && !summary("IceFailedWhileConnecting").failed());
+    }
+
     #[test]
     fn frames_up_to_4k_either_way_round_are_shown() {
         assert!(super::frame_fits(1280, 720));

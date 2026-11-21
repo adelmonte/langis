@@ -21,6 +21,7 @@ mod message_requests;
 mod release_notes;
 mod remote_config;
 mod view_once;
+mod unread_reminders;
 mod profile;
 mod challenge;
 mod alerts;
@@ -490,6 +491,8 @@ struct Actor {
     release_notes: RefCell<Option<tokio::task::JoinHandle<()>>>,
     /// Shows megaphones; notified when they change.
     megaphones: RefCell<Option<tokio::task::JoinHandle<()>>>,
+    /// Desktop's unread reminder service, hourly.
+    unread_reminders: RefCell<Option<tokio::task::JoinHandle<()>>>,
     megaphone_check: tokio::sync::Notify,
     /// Stories being sent, recipient by recipient.
     story_jobs: RefCell<HashMap<u64, stories::StoryJob>>,
@@ -666,6 +669,7 @@ pub(crate) async fn run(
         receiver: RefCell::new(None),
         release_notes: RefCell::new(None),
         megaphones: RefCell::new(None),
+        unread_reminders: RefCell::new(None),
         megaphone_check: tokio::sync::Notify::new(),
         story_expiry_task: RefCell::new(None),
         story_jobs: RefCell::new(HashMap::new()),
@@ -901,6 +905,10 @@ impl Actor {
         }
         let task = tokio::task::spawn_local(self.clone().key_transparency_loop());
         if let Some(old) = self.kt_task.borrow_mut().replace(task) {
+            old.abort();
+        }
+        let task = tokio::task::spawn_local(self.clone().unread_reminder_loop());
+        if let Some(old) = self.unread_reminders.borrow_mut().replace(task) {
             old.abort();
         }
     }
@@ -1257,6 +1265,11 @@ impl Actor {
                     Ok(false) => {}
                     Err(error) => self.error("failed to save the chat colors", error),
                 },
+                Command::UnreadReminderShown { conversation } => {
+                    if let Err(error) = self.db.set_unread_reminded_at(&conversation, now_millis()).await {
+                        self.error("failed to save the unread reminder", error);
+                    }
+                }
             }
         });
     }
@@ -2886,18 +2899,27 @@ impl Actor {
                 self.set_removed_here(&conversation, on).await;
                 Ok(())
             }
+            ChatChange::Notify(kind, value) => self.db.set_chat_notify(&conversation, kind, value).await,
         };
         if let Err(error) = local {
             return self.error("failed to update chat", error);
         }
         self.emit(Event::ConversationsChanged);
-        let edits = match change {
+        // Mentions are written in both their old and new fields, as
+        // Desktop's `toGroupV2Record` does.
+        use langis_store::ChatNotifyKind;
+        let mentions = |off: bool| [storage::ChatEdit::DontNotifyMentions(off), storage::ChatEdit::Notify(ChatNotifyKind::Mentions, off.then_some(false))];
+        let edits: Vec<storage::ChatEdit> = match change {
             ChatChange::Archived(on) => vec![storage::ChatEdit::Archived(on)],
             ChatChange::MutedUntil(until) => vec![storage::ChatEdit::MutedUntil(until.max(0) as u64)],
             ChatChange::MarkedUnread(on) => vec![storage::ChatEdit::MarkedUnread(on)],
             ChatChange::Blocked(on) => vec![storage::ChatEdit::Blocked(on)],
             ChatChange::HideStory(on) => vec![storage::ChatEdit::HideStory(on)],
-            ChatChange::DontNotifyMentions(on) => vec![storage::ChatEdit::DontNotifyMentions(on)],
+            ChatChange::DontNotifyMentions(on) => mentions(on).to_vec(),
+            ChatChange::Notify(ChatNotifyKind::Mentions, value) => {
+                vec![storage::ChatEdit::DontNotifyMentions(value == Some(false)), storage::ChatEdit::Notify(ChatNotifyKind::Mentions, value)]
+            }
+            ChatChange::Notify(kind, value) => vec![storage::ChatEdit::Notify(kind, value)],
             // Desktop's `removeContact` stops sharing our profile too.
             ChatChange::Removed(true) => vec![storage::ChatEdit::Hidden(true), storage::ChatEdit::ProfileSharing(false)],
             ChatChange::Removed(false) => vec![storage::ChatEdit::Hidden(false)],

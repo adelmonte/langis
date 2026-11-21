@@ -217,6 +217,10 @@ this revision on 2026-11-05. Changes:
   `showUnreadReminders`), from Signal Desktop's `protos/SignalStorage.proto`,
   so the notification settings can be read. Writes edit the record's wire
   bytes, so fields neither proto knows are kept.
+- `protobuf/StorageService.proto`: `ContactRecord` fields 28 and 29 and
+  `GroupV2Record` fields 14 to 17 (`notifyFor{Calls,Mentions,Replies}IfMuted`,
+  `showUnreadReminders`), from Signal Desktop's `protos/SignalStorage.proto`,
+  so a chat's own "While muted" and unread reminder settings can be read.
 - `protobuf/SignalService.proto`: `DataMessage.Contact` fields 8 to 10
   (`aciBinary`, `nickname` as a `SignalNickname`, `note`), from Signal
   Desktop's `protos/SignalService.proto`, so a shared contact's Signal
