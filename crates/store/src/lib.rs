@@ -12,6 +12,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous},
 };
 
+mod backup_media;
 mod call_history;
 mod call_links;
 mod chat_colors;
@@ -30,6 +31,7 @@ mod sticker_favorites;
 mod sticker_packs;
 mod stories;
 mod view_once;
+pub use backup_media::*;
 pub use call_history::*;
 pub use call_links::*;
 pub use chat_colors::*;
@@ -3786,6 +3788,7 @@ impl AppDb {
         sqlx::query("DELETE FROM pinned_messages").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM emoji_usage").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM early_events").execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM backup_media_downloads").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM adhoc_calls").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM call_links").execute(&mut *tx).await?;
         sqlx::query("DELETE FROM profile_sharing").execute(&mut *tx).await?;

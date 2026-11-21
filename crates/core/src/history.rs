@@ -669,6 +669,11 @@ pub(crate) async fn import(db: &AppDb, plain: &[u8], me: &str, mut progress: imp
             }
             Some(proto::frame::Item::Account(account)) => {
                 imported.settings = Some(account_settings(&account));
+                // Desktop's import keeps the subscriber id
+                // (`saveBackupsSubscriberData`), for the subscription's status.
+                if let Some(data) = account.backupsSubscriberData.as_ref() {
+                    crate::backups::save_subscriber_id(db, Some(&data.subscriberId)).await;
+                }
                 if let Some(settings) = account.accountSettings.as_ref() {
                     for custom in &settings.customChatColors {
                         let Some(color) = custom.color.as_ref().and_then(custom_color) else { continue };

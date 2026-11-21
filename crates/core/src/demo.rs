@@ -958,6 +958,9 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
         aci: SELF.trim_start_matches("d:").into(),
     });
     emit(Event::Connection(ConnectionState::Online));
+    // A paid backup plan, and its media part way down.
+    crate::backups::seed_demo(&db, chrono::Utc::now().timestamp_millis()).await;
+    emit(Event::BackupMediaDownload(crate::backups::download_status(&db, false).await));
     emit(Event::FavoriteStickerIds(crate::stickers::favorite_sticker_ids(&db).await.unwrap_or_default()));
     // A made-up megaphone, with a drawn image.
     let megaphone_image = data_dir.join("attachments").join("demo-megaphone.png");
@@ -978,6 +981,9 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             break;
         }
         if crate::demo_groups::handle(&db, &data_dir, &command, &emit).await {
+            continue;
+        }
+        if crate::backups::demo_handle(&db, &command, &emit).await {
             continue;
         }
         match command {
@@ -2459,6 +2465,8 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             Command::UnreadReminderShown { conversation } => {
                 let _ = db.set_unread_reminded_at(&conversation, now()).await;
             }
+            // Answered by `backups::demo_handle` above.
+            Command::RefreshBackupStatus { .. } | Command::LoadBackupMediaDownload | Command::BackupMediaDownload(_) => {}
             Command::EditChatColors(edit) => {
                 if let Ok(true) = db.edit_chat_colors(edit).await {
                     emit(Event::ChatColorsChanged);

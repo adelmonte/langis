@@ -1288,6 +1288,7 @@ async fn drop_later_migrations(db: &AppDb) {
         sqlx::query(AssertSqlSafe(format!("ALTER TABLE conversations DROP COLUMN {column}"))).execute(&db.writer).await.unwrap();
     }
     sqlx::query("DROP TABLE notification_profiles").execute(&db.writer).await.unwrap();
+    sqlx::query("DROP TABLE backup_media_downloads").execute(&db.writer).await.unwrap();
 }
 
 /// Rewrites the migration history to look like a pre-squash database that

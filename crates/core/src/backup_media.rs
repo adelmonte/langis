@@ -205,11 +205,22 @@ pub(crate) fn credentials_path(now_seconds: u64) -> (u64, u64, String) {
     (start, end, format!("/v1/archives/auth?redemptionStartSeconds={start}&redemptionEndSeconds={end}"))
 }
 
-/// Reads the media credentials out of `GET /v1/archives/auth`'s answer,
+/// Which of a backup's two ids a credential is for (zkgroup's
+/// `BackupCredentialType`): the message backup's, keyed by the backup key
+/// from the account entropy pool, or the media's, keyed by the media root
+/// key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CredentialKind {
+    Messages,
+    Media,
+}
+
+/// Reads one kind of credential out of `GET /v1/archives/auth`'s answer,
 /// checking them as Desktop's `BackupCredentials#doFetch` does: each in the
 /// asked range, none twice.
 pub(crate) fn receive_credentials(
     json: &[u8],
+    kind: CredentialKind,
     context: &BackupAuthCredentialRequestContext,
     params: &GenericServerPublicParams,
     start: u64,
@@ -221,6 +232,9 @@ pub(crate) fn receive_credentials(
     }
     #[derive(serde::Deserialize)]
     struct Lists {
+        #[serde(default)]
+        messages: Vec<Entry>,
+        #[serde(default)]
         media: Vec<Entry>,
     }
     #[derive(serde::Deserialize)]
@@ -231,7 +245,11 @@ pub(crate) fn receive_credentials(
     }
     let answer: Answer = serde_json::from_slice(json).context("unexpected credentials answer")?;
     let mut credentials: Vec<(u64, BackupAuthCredential)> = Vec::new();
-    for entry in answer.credentials.media {
+    let entries = match kind {
+        CredentialKind::Messages => answer.credentials.messages,
+        CredentialKind::Media => answer.credentials.media,
+    };
+    for entry in entries {
         let at = entry.redemption_time;
         if at < start || at > end {
             bail!("a backup credential is for a day that wasn't asked for");
@@ -500,7 +518,7 @@ impl BackupMedia {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
         let today = now - now % DAY_SECONDS;
         if !session.credentials.iter().any(|(day, _)| *day == today) {
-            match fetch_credentials(&service, root, aci, &params, now).await? {
+            match fetch_credentials(&service, CredentialKind::Media, root, aci, &params, now).await? {
                 Some(credentials) => session.credentials = credentials,
                 None => {
                     let why = "there's no backup for this account".to_owned();
@@ -560,9 +578,11 @@ impl BackupMedia {
     }
 }
 
-/// A week of media credentials; `None` when the account has no backup.
-async fn fetch_credentials(
+/// A week of credentials of one kind, for `key` (the media root key for
+/// media); `None` when the account has no backup.
+pub(crate) async fn fetch_credentials(
     service: &presage::libsignal_service::push_service::PushService,
+    kind: CredentialKind,
     root: &BackupKey,
     aci: Aci,
     params: &GenericServerPublicParams,
@@ -577,7 +597,7 @@ async fn fetch_credentials(
     }
     let body = response.error_for_status().context("getting backup credentials")?.bytes().await?;
     let context = BackupAuthCredentialRequestContext::new(root, aci);
-    receive_credentials(&body, &context, params, start, end).map(Some)
+    receive_credentials(&body, kind, &context, params, start, end).map(Some)
 }
 
 #[cfg(test)]
@@ -786,7 +806,7 @@ mod tests {
         };
         let media: Vec<_> = (0..7).map(|d| issue(start + d * DAY_SECONDS, BackupLevel::Paid)).collect();
         let answer = serde_json::json!({ "credentials": { "messages": [], "media": media } });
-        let credentials = receive_credentials(answer.to_string().as_bytes(), &context, &params, start, end).unwrap();
+        let credentials = receive_credentials(answer.to_string().as_bytes(), CredentialKind::Media, &context, &params, start, end).unwrap();
         assert_eq!(credentials.len(), 7);
         assert_eq!(credentials[0].0, start);
         assert!(credentials.iter().all(|(_, c)| c.backup_level() == BackupLevel::Paid));
@@ -798,14 +818,14 @@ mod tests {
 
         // Desktop refuses a day outside the range, and a day twice.
         let late = serde_json::json!({ "credentials": { "messages": [], "media": [issue(end + DAY_SECONDS, BackupLevel::Paid)] } });
-        assert!(receive_credentials(late.to_string().as_bytes(), &context, &params, start, end).is_err());
+        assert!(receive_credentials(late.to_string().as_bytes(), CredentialKind::Media, &context, &params, start, end).is_err());
         let twice = serde_json::json!({ "credentials": { "messages": [], "media": [issue(start, BackupLevel::Paid), issue(start, BackupLevel::Paid)] } });
-        assert!(receive_credentials(twice.to_string().as_bytes(), &context, &params, start, end).is_err());
+        assert!(receive_credentials(twice.to_string().as_bytes(), CredentialKind::Media, &context, &params, start, end).is_err());
         // One issued for someone else's backup doesn't verify.
         let other = BackupAuthCredentialRequestContext::new(&BackupKey::<1>([9; 32]), aci);
         let answer = serde_json::json!({ "credentials": { "messages": [], "media": [issue(start, BackupLevel::Free)] } });
-        assert!(receive_credentials(answer.to_string().as_bytes(), &other, &params, start, end).is_err());
-        let free = receive_credentials(answer.to_string().as_bytes(), &context, &params, start, end).unwrap();
+        assert!(receive_credentials(answer.to_string().as_bytes(), CredentialKind::Media, &other, &params, start, end).is_err());
+        let free = receive_credentials(answer.to_string().as_bytes(), CredentialKind::Media, &context, &params, start, end).unwrap();
         assert_eq!(free[0].1.backup_level(), BackupLevel::Free);
     }
 }
