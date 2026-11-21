@@ -538,15 +538,21 @@ impl Actor {
     }
 
     /// The members of a group to send its story to: everyone but us.
+    /// Desktop's `getConversationMembers` for a story: not those blocked or
+    /// found unregistered lately (`AppDb::left_out_of_group_sends`).
     async fn group_story_members(&self, group: &ConversationId) -> Vec<String> {
         let me = self.self_aci();
+        let left_out = self.db.left_out_of_group_sends(now_millis()).await.unwrap_or_default();
         self.db
             .conversation(group)
             .await
             .ok()
             .flatten()
-            .map(|g| g.members.into_iter().filter(|m| m != &me).collect())
+            .map(|g| g.members.into_iter().filter(|m| m != &me).collect::<Vec<_>>())
             .unwrap_or_default()
+            .into_iter()
+            .filter(|m| !left_out.contains(m))
+            .collect()
     }
 
     /// The story lists, from Storage Service (and our edits since).
@@ -578,7 +584,9 @@ impl Actor {
         } else {
             list.members.clone()
         };
-        people.retain(|p| p != &me && p != langis_store::SIGNAL_ACI);
+        // As a group's: not those blocked or found unregistered lately.
+        let left_out = self.db.left_out_of_group_sends(now_millis()).await.unwrap_or_default();
+        people.retain(|p| p != &me && p != langis_store::SIGNAL_ACI && !left_out.contains(p));
         people.sort();
         people.dedup();
         people
