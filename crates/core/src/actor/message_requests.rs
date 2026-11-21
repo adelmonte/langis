@@ -103,6 +103,10 @@ impl Actor {
             }
             self.set_profile_sharing_here(conversation, true).await;
             edits.push(storage::ChatEdit::ProfileSharing(true));
+            // Desktop's `restoreContact` on accepting.
+            if self.set_removed_here(conversation, false).await {
+                edits.push(storage::ChatEdit::Hidden(false));
+            }
             if !before.accepted {
                 self.download_held(conversation).await;
             }
@@ -157,6 +161,73 @@ impl Actor {
                     self.sync_storage(&manager).await;
                 }
             }
+        }
+    }
+
+    /// Desktop's `removeContact` (`removed`) and `restoreContact`, here:
+    /// removing stops sharing our profile, forgets our answer to their
+    /// message request and adds "You have removed this person"; restoring
+    /// takes that notice away. True when it changed anything.
+    pub(super) async fn set_removed_here(&self, conversation: &ConversationId, removed: bool) -> bool {
+        if !removed {
+            return match self.db.restore_contact(conversation).await {
+                Ok(Some(notices)) => {
+                    for message_id in notices {
+                        self.emit(Event::MessageRemoved { conversation: conversation.clone(), message_id });
+                    }
+                    self.emit(Event::ConversationsChanged);
+                    true
+                }
+                Ok(None) => false,
+                Err(error) => {
+                    self.error("failed to restore the contact", error);
+                    false
+                }
+            };
+        }
+        match self.db.remove_contact(conversation).await {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(error) => {
+                self.error("failed to remove the contact", error);
+                return false;
+            }
+        }
+        self.set_profile_sharing_here(conversation, false).await;
+        if let Err(error) = self.db.set_message_request(conversation, MessageRequestResponse::Unknown).await {
+            warn!(%error, "failed to forget the message request answer");
+        }
+        self.notice(conversation, self.next_timestamp(), Notice::ContactRemoved).await;
+        self.emit(Event::ConversationsChanged);
+        true
+    }
+
+    /// Sending to someone we removed restores them (Desktop's
+    /// `enqueueMessageForSend`), here and in Storage Service.
+    pub(super) async fn restore_on_send(&self, conversation: &ConversationId) {
+        if conversation.as_direct().is_none() || !self.set_removed_here(conversation, false).await {
+            return;
+        }
+        if let Some(manager) = self.manager() {
+            match storage::write_chat_all(&manager, conversation, &[storage::ChatEdit::Hidden(false)]).await {
+                Ok(()) => self.storage_written(),
+                Err(error) => warn!(error = %format!("{error:#}"), "couldn't restore the contact on your other devices"),
+            }
+        }
+    }
+
+    /// A removed person messaged us: a message request again, without the
+    /// notice (Desktop's `onNewMessage`).
+    pub(super) async fn contact_messaged(&self, conversation: &ConversationId) {
+        match self.db.contact_messaged(conversation).await {
+            Ok(Some(notices)) => {
+                for message_id in notices {
+                    self.emit(Event::MessageRemoved { conversation: conversation.clone(), message_id });
+                }
+                self.emit(Event::ConversationsChanged);
+            }
+            Ok(None) => {}
+            Err(error) => warn!(%error, "failed to update a removed contact"),
         }
     }
 

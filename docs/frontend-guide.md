@@ -189,6 +189,17 @@ replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test
 for leaving them out of the people offered for a new chat or group.
 
+**Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
+a contact row (`removeContact`): their chat's `removal_stage` becomes
+`JustNotification`, our profile is no longer shared with them, the chat
+gets a `Notice::ContactRemoved`, and Storage Service's `hidden` is set.
+Leave them out of the people offered for a new chat. The chat isn't
+`accepted` while removed, but with `JustNotification` it keeps its composer
+(Desktop shows message request actions only for `MessageRequest`, which it
+becomes when they message us, worded "You have removed this person in the
+past"). Accepting, sending them a message or `Removed(false)` restores
+them.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified

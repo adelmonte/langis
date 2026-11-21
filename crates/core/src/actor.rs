@@ -1543,8 +1543,11 @@ impl Actor {
                     return;
                 }
                 drop(checks);
-                if sender != self_aci && matches!(content.body, ContentBody::DataMessage(_)) {
+                if sender != self_aci && let ContentBody::DataMessage(dm) = &content.body {
                     self.note_registration(std::slice::from_ref(&sender), &[]).await;
+                    if dm.group_v2.is_none() {
+                        self.contact_messaged(&ConversationId::direct(&sender)).await;
+                    }
                 }
                 let ctx = MapContext { self_aci: &self_aci, now: now_millis() };
                 for mut action in mapping::map_content(&content, &ctx) {
@@ -2775,6 +2778,12 @@ impl Actor {
         if self.is_note_to_self(&conversation) && matches!(change, ChatChange::Blocked(true)) {
             return;
         }
+        // Desktop removes people only (`removeContact`).
+        if matches!(change, ChatChange::Removed(_))
+            && (conversation.as_direct().is_none() || conversation.is_signal() || self.is_note_to_self(&conversation))
+        {
+            return;
+        }
         let local = match change {
             ChatChange::Archived(on) => self.db.set_archived(&conversation, on).await,
             ChatChange::MutedUntil(until) => self.db.set_muted_until(&conversation, until).await,
@@ -2782,20 +2791,27 @@ impl Actor {
             ChatChange::Blocked(on) => self.db.set_blocked(&conversation, on).await,
             ChatChange::HideStory(on) => self.set_story_hidden(&conversation, on).await,
             ChatChange::DontNotifyMentions(on) => self.db.set_dont_notify_mentions(&conversation, on).await,
+            ChatChange::Removed(on) => {
+                self.set_removed_here(&conversation, on).await;
+                Ok(())
+            }
         };
         if let Err(error) = local {
             return self.error("failed to update chat", error);
         }
         self.emit(Event::ConversationsChanged);
-        let edit = match change {
-            ChatChange::Archived(on) => storage::ChatEdit::Archived(on),
-            ChatChange::MutedUntil(until) => storage::ChatEdit::MutedUntil(until.max(0) as u64),
-            ChatChange::MarkedUnread(on) => storage::ChatEdit::MarkedUnread(on),
-            ChatChange::Blocked(on) => storage::ChatEdit::Blocked(on),
-            ChatChange::HideStory(on) => storage::ChatEdit::HideStory(on),
-            ChatChange::DontNotifyMentions(on) => storage::ChatEdit::DontNotifyMentions(on),
+        let edits = match change {
+            ChatChange::Archived(on) => vec![storage::ChatEdit::Archived(on)],
+            ChatChange::MutedUntil(until) => vec![storage::ChatEdit::MutedUntil(until.max(0) as u64)],
+            ChatChange::MarkedUnread(on) => vec![storage::ChatEdit::MarkedUnread(on)],
+            ChatChange::Blocked(on) => vec![storage::ChatEdit::Blocked(on)],
+            ChatChange::HideStory(on) => vec![storage::ChatEdit::HideStory(on)],
+            ChatChange::DontNotifyMentions(on) => vec![storage::ChatEdit::DontNotifyMentions(on)],
+            // Desktop's `removeContact` stops sharing our profile too.
+            ChatChange::Removed(true) => vec![storage::ChatEdit::Hidden(true), storage::ChatEdit::ProfileSharing(false)],
+            ChatChange::Removed(false) => vec![storage::ChatEdit::Hidden(false)],
         };
-        match storage::write_chat(&manager, &conversation, edit).await {
+        match storage::write_chat_all(&manager, &conversation, &edits).await {
             Ok(()) => self.storage_written(),
             Err(error) => {
                 self.error("couldn't update the chat on your other devices", format!("{error:#}"));
@@ -2974,6 +2990,12 @@ impl Actor {
             .filter_map(|c| Some((Aci::from(c.aci).service_id_string(), c.unregistered_at?)))
             .collect();
         self.note_registration(&[], &unregistered).await;
+        let removed: Vec<(String, bool)> = contacts.iter().map(|c| (Aci::from(c.aci).service_id_string(), c.removed)).collect();
+        match self.db.apply_removed(&removed).await {
+            Ok(true) => self.emit(Event::ConversationsChanged),
+            Ok(false) => {}
+            Err(error) => warn!(%error, "failed to save removed contacts"),
+        }
         let usernames: Vec<(String, String)> = contacts
             .iter()
             .filter_map(|c| Some((Aci::from(c.aci).service_id_string(), c.username.clone()?)))
@@ -4607,6 +4629,7 @@ impl Actor {
     ) -> Option<(i64, DataMessage, u64)> {
         let conversation = conversation.clone();
         self.maybe_apply_universal_timer(&conversation).await;
+        self.restore_on_send(&conversation).await;
         let timestamp = self.next_timestamp();
         let quoted = match quote {
             Some(id) => self.db.message(id).await.ok().flatten(),

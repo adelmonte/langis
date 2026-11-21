@@ -1760,6 +1760,11 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                     crate::ChatChange::MarkedUnread(on) => db.set_marked_unread(&conversation, on).await,
                     crate::ChatChange::Blocked(on) => db.set_blocked(&conversation, on).await,
                     crate::ChatChange::DontNotifyMentions(on) => db.set_dont_notify_mentions(&conversation, on).await,
+                    crate::ChatChange::Removed(true) => match db.remove_contact(&conversation).await {
+                        Ok(true) => db.insert_notice(&conversation, now(), &langis_store::Notice::ContactRemoved).await.map(|_| ()),
+                        other => other.map(|_| ()),
+                    },
+                    crate::ChatChange::Removed(false) => db.restore_contact(&conversation).await.map(|_| ()),
                     crate::ChatChange::HideStory(on) => {
                         let done = db.set_story_hidden(&conversation, on).await;
                         let _ = events.unbounded_send(Event::StorySettingsChanged);

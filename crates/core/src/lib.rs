@@ -859,6 +859,9 @@ pub enum ChatChange {
     /// A group's mentions while it's muted: `true` is Desktop's "Don't
     /// notify" (`dontNotifyForMentionsIfMuted`).
     DontNotifyMentions(bool),
+    /// A person removed from our contacts (`true`, Desktop's `removeContact`)
+    /// or restored. People only.
+    Removed(bool),
 }
 
 /// A story list (Desktop's distribution list), from Storage Service.
