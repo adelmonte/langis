@@ -12,6 +12,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous},
 };
 
+mod backup;
 mod call_history;
 mod call_links;
 mod chat_colors;
