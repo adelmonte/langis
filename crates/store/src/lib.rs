@@ -3449,6 +3449,12 @@ impl AppDb {
         Ok(done.rows_affected())
     }
 
+    /// The account this data belongs to: Note to Self's service id, made
+    /// for the linked account at every start. None when there's no data.
+    pub async fn account_aci(&self) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar("SELECT substr(id, 3) FROM conversations WHERE kind = 'note_to_self' LIMIT 1").fetch_optional(&self.pool).await?)
+    }
+
     /// Deletes everything about the account (used when unlinking).
     pub async fn clear(&self) -> Result<()> {
         let mut tx = self.write().await?;

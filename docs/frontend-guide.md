@@ -76,6 +76,7 @@ linking:
 | `Event::LinkUrl(url)` | Draw `url` as a QR code. The user scans it in Signal on their phone (Settings, Linked devices). |
 | `Event::Linked` | The phone scanned the code. Show a "Syncing contacts and groups" step until `Ready`. |
 | `Event::LinkFailed { error, detail }` | Show the failure by its `LinkError` kind (below); send `Command::Link` again to retry. `detail` is the error's text, for logs. |
+| `Event::LinkedOtherAccount` | The phone linked another account than the one whose data is here. Ask as Desktop does ("Delete all data?"), then send `Command::ContinueLink { delete_data }`: `true` deletes the old data and goes on to `Linked`; `false` drops the new link and gives `NeedsLinking` for a new code. |
 | `Event::Ready { aci, phone }` | Linked. Show the chat list. |
 
 `LinkError` sorts failures as Signal Desktop's install screen does
@@ -87,6 +88,15 @@ unexpected error occurred", Retry), and three for a full error screen:
 `ConnectionFailed` (the server couldn't be reached for a code),
 `TooManyDevices` (HTTP 411) and `TooOld` (HTTP 409, the server wants a
 newer client).
+
+Whose data is here is told by Note to Self's id in the app database. A
+link to the same account, or to a data directory with no account yet, goes
+straight on. `LinkedOtherAccount` can also come at a start, when the app
+closed while the question was open: nothing of the new account runs, and
+nothing is deleted, until the answer. Linking again with `Command::Link`
+also drops the waiting link. Unlike Desktop, which asks before it
+registers, langis asks after the server registered the device, so "no"
+unlinks it from the phone again.
 
 On later starts, `Ready` comes straight away. After linking, the phone sends
 recent history: `Event::History(progress)` reports how far along it is.

@@ -557,6 +557,9 @@ struct Actor {
     /// per-chat queue (a reply or edit after its video, not before).
     video_waits: RefCell<HashMap<ConversationId, usize>>,
     linking: RefCell<bool>,
+    /// Linked to another account than the data here's, waiting for
+    /// `Command::ContinueLink` (Desktop's "Delete all data?").
+    pending_link: RefCell<Option<SignalManager>>,
     /// Storage Service contacts have been read this session.
     storage_synced: RefCell<bool>,
     /// The account record's settings have been read from Storage Service
@@ -696,6 +699,7 @@ pub(crate) async fn run(
         videos,
         video_waits: Default::default(),
         linking: RefCell::new(false),
+        pending_link: RefCell::new(None),
         storage_synced: RefCell::new(false),
         account_record_read: Default::default(),
         long_texts_resumed: RefCell::new(false),
@@ -737,6 +741,9 @@ pub(crate) async fn run(
     if actor.store.is_registered().await {
         actor.emit_favorite_sticker_ids().await;
         match Manager::load_registered(actor.store.clone()).await {
+            // A link to another account left waiting when the app closed
+            // asks again before anything is used.
+            Ok(manager) if actor.other_account(&manager).await => actor.ask_delete_data(manager),
             Ok(manager) => actor.start_session(manager, false).await,
             Err(error) => {
                 warn!(%error, "failed to load registration");
@@ -996,6 +1003,7 @@ impl Actor {
         tokio::task::spawn_local(async move {
             match command {
                 Command::Link => self.link().await,
+                Command::ContinueLink { delete_data } => self.continue_link(delete_data).await,
                 Command::SendText { conversation, body, quote, preview, mentions, styles } => {
                     self.send_text(conversation, body, quote, preview, mentions, styles).await
                 }
@@ -1262,6 +1270,11 @@ impl Actor {
         }
         self.stop_release_notes();
         self.manager.borrow_mut().take();
+        // A new code instead of answering "Delete all data?": that link goes.
+        let pending = self.pending_link.borrow_mut().take();
+        if let Some(manager) = pending {
+            self.drop_link(manager).await;
+        }
 
         let (url_tx, url_rx) = oneshot::channel();
         let this = self.clone();
@@ -1285,24 +1298,82 @@ impl Actor {
         *self.linking.borrow_mut() = false;
 
         match result {
+            Ok(manager) if self.other_account(&manager).await => {
+                info!("linked to another account than the data here");
+                self.ask_delete_data(manager);
+            }
             Ok(manager) => {
                 info!("linked as secondary device");
-                self.emit(Event::Linked);
-                // A fresh link may be a different account: start from a clean slate.
-                self.identities_seen.borrow_mut().clear();
-        if let Err(error) = self.db.clear().await {
-                    self.error("failed to reset app database", error);
-                }
-                self.titled.borrow_mut().clear();
-                self.names.borrow_mut().clear();
-                self.start_session(manager, true).await;
-                self.emit(Event::ConversationsChanged);
+                self.finish_link(manager).await;
             }
             Err(error) => {
                 let kind = crate::linking::classify(&error, had_url.get());
                 warn!(%error, ?kind, "linking failed");
                 self.emit(Event::LinkFailed { error: kind, detail: error.to_string() });
             }
+        }
+    }
+
+    async fn finish_link(self: &Rc<Self>, manager: SignalManager) {
+        self.emit(Event::Linked);
+        // A fresh link starts from a clean slate.
+        self.identities_seen.borrow_mut().clear();
+        if let Err(error) = self.db.clear().await {
+            self.error("failed to reset app database", error);
+        }
+        self.titled.borrow_mut().clear();
+        self.names.borrow_mut().clear();
+        self.start_session(manager, true).await;
+        self.emit(Event::ConversationsChanged);
+    }
+
+    /// Whether `manager` is another account than the one whose data is
+    /// here (Desktop's `isCleanStart` and `isRelinkingToSameAccount` in
+    /// `ts/state/ducks/installer.preload`).
+    async fn other_account(&self, manager: &SignalManager) -> bool {
+        let aci = manager.registration_data().service_ids.aci().service_id_string();
+        match self.db.account_aci().await {
+            Ok(previous) => previous.is_some_and(|p| p != aci),
+            // Unknown: ask rather than risk mixing two accounts.
+            Err(error) => {
+                warn!(%error, "couldn't read whose data this is");
+                true
+            }
+        }
+    }
+
+    fn ask_delete_data(&self, manager: SignalManager) {
+        *self.pending_link.borrow_mut() = Some(manager);
+        self.emit(Event::LinkedOtherAccount);
+    }
+
+    /// The answer to `Event::LinkedOtherAccount`: delete the old data and
+    /// go on, or drop the new link and show a new code. Nothing is deleted
+    /// without `delete_data`.
+    async fn continue_link(self: Rc<Self>, delete_data: bool) {
+        let Some(manager) = self.pending_link.borrow_mut().take() else {
+            debug!("no link waiting for an answer");
+            return;
+        };
+        if delete_data {
+            info!("deleting the other account's data, as confirmed");
+            self.wipe_data().await;
+            self.finish_link(manager).await;
+        } else {
+            self.drop_link(manager).await;
+            self.emit(Event::NeedsLinking);
+        }
+    }
+
+    /// Undoes a link that wasn't kept: the phone forgets the device, and
+    /// its registration goes. The data here stays.
+    async fn drop_link(&self, manager: SignalManager) {
+        if let Err(error) = manager.unlink_self().await {
+            warn!(%error, "server-side unlink of the unwanted link failed");
+        }
+        let mut store = self.store.clone();
+        if let Err(error) = store.clear_registration().await {
+            warn!(%error, "failed to clear the unwanted registration");
         }
     }
 
@@ -1322,6 +1393,10 @@ impl Actor {
         }
         // They'd make the Signal chat again in the wiped database.
         self.stop_release_notes();
+        let pending = self.pending_link.borrow_mut().take();
+        if let Some(manager) = pending {
+            self.drop_link(manager).await;
+        }
         let manager = self.manager.borrow_mut().take();
         if let Some(manager) = manager
             && let Err(error) = manager.unlink_self().await
@@ -1335,13 +1410,20 @@ impl Actor {
     }
 
     async fn wipe(&self) {
+        let mut store = self.store.clone();
+        if let Err(error) = store.clear_registration().await {
+            warn!(%error, "failed to clear presage registration");
+        }
+        self.wipe_data().await;
+    }
+
+    /// Everything but the registration: what `wipe` and a confirmed link
+    /// to another account delete.
+    async fn wipe_data(&self) {
         self.drop_waiting_downloads();
         let mut store = self.store.clone();
         if let Err(error) = store.clear_contents().await {
             warn!(%error, "failed to clear presage contents");
-        }
-        if let Err(error) = store.clear_registration().await {
-            warn!(%error, "failed to clear presage registration");
         }
         self.identities_seen.borrow_mut().clear();
         if let Err(error) = self.db.clear().await {

@@ -2474,6 +2474,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             | Command::JoinGroupLink { .. }
             | Command::RefreshGroup { .. }
             | Command::Link
+            | Command::ContinueLink { .. }
             | Command::Typing { .. }
             | Command::FetchAttachment { .. }
             | Command::FetchAttachments { .. }

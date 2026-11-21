@@ -403,6 +403,10 @@ pub struct GroupLinkPreview {
 pub enum Command {
     /// Starts linking as a secondary device. Emits `Event::LinkUrl` then `Event::Linked`.
     Link,
+    /// The answer to `Event::LinkedOtherAccount`: `true` deletes the data
+    /// here and finishes linking; `false` drops the new link (the phone
+    /// forgets this device) and emits `Event::NeedsLinking`.
+    ContinueLink { delete_data: bool },
     SendText {
         conversation: ConversationId,
         /// With a [`mapping::MENTION_PLACEHOLDER`] per @mention.
@@ -1243,6 +1247,10 @@ pub enum Event {
     /// Linking failed: what kind of failure (Desktop's install screen shows
     /// each its own way) and the error's text, for logs.
     LinkFailed { error: LinkError, detail: String },
+    /// The phone linked another account than the one whose data is here.
+    /// Nothing is used or deleted until `Command::ContinueLink` (Desktop's
+    /// "Delete all data?" on its install screen).
+    LinkedOtherAccount,
     /// Account is ready. Emitted at startup when already linked, and after linking.
     Ready { phone: Option<String>, aci: String },
     Connection(ConnectionState),

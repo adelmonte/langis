@@ -3167,3 +3167,13 @@ fn description_notices_kept_before_their_text_still_read() {
     let new = GroupNotice::Description { description: Some("Hikes on Saturdays".into()) };
     assert_eq!(serde_json::from_str::<GroupNotice>(&serde_json::to_string(&new).unwrap()).unwrap(), new);
 }
+
+#[tokio::test]
+async fn account_aci_is_note_to_selfs() {
+    let db = test_db().await;
+    assert_eq!(db.account_aci().await.unwrap(), None);
+    db.upsert_conversation(&ConversationId::direct("aaaa-1"), ConversationUpdate { kind: Some(ConversationKind::Direct), ..Default::default() }).await.unwrap();
+    assert_eq!(db.account_aci().await.unwrap(), None);
+    db.upsert_conversation(&ConversationId::direct("bbbb-2"), ConversationUpdate { kind: Some(ConversationKind::NoteToSelf), ..Default::default() }).await.unwrap();
+    assert_eq!(db.account_aci().await.unwrap().as_deref(), Some("bbbb-2"));
+}
