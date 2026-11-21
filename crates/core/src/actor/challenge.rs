@@ -76,7 +76,8 @@ impl Actor {
         }
     }
 
-    /// The captcha's answer (`signalcaptcha://…`): sent to the server, and
+    /// The captcha's answer (`signalcaptcha://…`, or just what follows
+    /// it): sent to the server, and
     /// the held messages go again once it's accepted.
     pub(super) async fn submit_captcha(self: Rc<Self>, captcha: String) {
         // Held until the challenge is cleared, so a message held meanwhile
@@ -88,7 +89,12 @@ impl Actor {
         let Some(manager) = self.manager() else {
             return self.emit(Event::Captcha(Err("Not connected".into())));
         };
-        let captcha = captcha.trim().trim_end_matches('/').to_owned();
+        // The server wants what follows `signalcaptcha://` (Desktop's
+        // `captchaRoute` hands over the hostname), not the link itself.
+        let captcha = match crate::routes::parse(&captcha) {
+            Some(crate::routes::Route::Captcha(captcha)) => captcha,
+            _ => captcha.trim().trim_end_matches('/').to_owned(),
+        };
         match manager.submit_recaptcha_challenge(&challenge.token, &captcha).await {
             Ok(()) => {
                 info!(held = challenge.held.len(), "captcha accepted; sending what it held");
