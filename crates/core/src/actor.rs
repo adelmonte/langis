@@ -2817,6 +2817,10 @@ impl Actor {
                         }
                     }
                 }
+                Err(presage::Error::ServiceError(ServiceError::NotFoundError)) => {
+                    debug!("profile not found");
+                    this.check_account_exists(&manager, &service_id).await;
+                }
                 Err(error) => debug!(%error, "profile fetch failed"),
             }
         });
@@ -3556,6 +3560,9 @@ impl Actor {
         let remote = match crate::profiles::fetch(manager, aci, key).await {
             Ok(remote) => remote,
             Err(error) => {
+                if crate::profiles::is_not_found(&error) {
+                    self.check_account_exists(manager, sid).await;
+                }
                 debug!(error = %format!("{error:#}"), member = %sid, "profile fetch failed");
                 return PhotoOutcome::ProfileFailed;
             }

@@ -213,7 +213,9 @@ admins while they're neither a member nor banned.
 
 **No longer on Signal.** A send that finds someone unregistered (the
 server's 404) sets their chat's `unregistered_at`, as Desktop's
-`discoveredUnregisteredAt`; a send that reaches them, or a message from
+`discoveredUnregisteredAt`. So does a profile fetch that gets a 404 when
+the server then says the account doesn't exist (Desktop's `getProfile`
+and `checkAccountExistence`). A send that reaches them, or a message from
 them, clears it. `Conversation::ever_unregistered()` is Desktop's test for
 replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test

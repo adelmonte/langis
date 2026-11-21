@@ -66,6 +66,33 @@ pub(crate) async fn fetch(manager: &SignalManager, aci: Aci, key: ProfileKey) ->
     Ok(decode(&json, key))
 }
 
+/// Whether a [`fetch`] failed with 404 Not Found (Desktop's
+/// `getProfile` then checks the account exists).
+pub(crate) fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|e| e.downcast_ref::<reqwest::Error>())
+        .any(|e| e.status() == Some(reqwest::StatusCode::NOT_FOUND))
+}
+
+/// Whether the server still has an account for `service_id` (Desktop's
+/// `checkAccountExistence`, libsignal-net's unauthenticated
+/// `accountExists`, which asks `HEAD /v1/accounts/account/{serviceId}`):
+/// 200 yes, 404 no, anything else an error.
+pub(crate) async fn account_exists(manager: &SignalManager, service_id: &str) -> anyhow::Result<bool> {
+    let service = crate::storage::push_service(manager)?;
+    let path = format!("/v1/accounts/account/{service_id}");
+    let response = service
+        .request(reqwest::Method::HEAD, Endpoint::service(path), HttpAuthOverride::Unidentified)?
+        .send()
+        .await?;
+    match response.status() {
+        status if status.is_success() => Ok(true),
+        reqwest::StatusCode::NOT_FOUND => Ok(false),
+        status => bail!("account check answered {status}"),
+    }
+}
+
 /// A profile response decrypted with their key. Fields that don't decrypt
 /// are left empty (Desktop logs and skips them too).
 pub(crate) fn decode(json: &serde_json::Value, key: ProfileKey) -> RemoteProfile {
