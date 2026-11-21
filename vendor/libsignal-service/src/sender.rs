@@ -33,6 +33,9 @@ pub struct GroupSenderKey<'a> {
     /// Sending to only some members (Desktop's `isPartialSend`, a retry to
     /// those an earlier send missed): members left out keep our key.
     pub partial: bool,
+    /// Everyone in the group (not us), also members not sent to now
+    /// ([`sender_key::SenderKeyRequest::members`]).
+    pub members: Option<Vec<ServiceId>>,
 }
 
 /// signal-gpui: how a group message went.
@@ -580,6 +583,7 @@ where
             }),
             now_ms: sender_key.now_ms,
             partial: sender_key.partial,
+            members: sender_key.members.clone(),
         };
         let outcome = sender_key::send_via_sender_key(
             &mut transport,
@@ -679,6 +683,7 @@ where
             auth: None,
             now_ms,
             partial: false,
+            members: None,
         };
         sender_key::send_via_sender_key(&mut transport, info, &request).await
     }

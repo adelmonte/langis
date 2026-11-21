@@ -491,7 +491,7 @@ impl SenderKeyTransport for Fake {
 const T: u64 = 1_700_000_000_000;
 
 fn story(recipients: &[u8]) -> SenderKeyRequest<'static> {
-    SenderKeyRequest { recipients: recipients.iter().map(|n| sid(*n)).collect(), story: true, group: false, auth: None, now_ms: T, partial: false }
+    SenderKeyRequest { recipients: recipients.iter().map(|n| sid(*n)).collect(), story: true, group: false, auth: None, now_ms: T, partial: false, members: None }
 }
 
 #[allow(clippy::result_large_err)]
@@ -585,7 +585,7 @@ fn fewer_than_two_falls_over() {
 fn group_message_without_endorsements_falls_over_at_once() {
     let mut fake = Fake::with_sessions(&[(1, &[(1, 11)]), (2, &[(1, 21)])]);
     let mut info = SenderKeyInfo::new(T);
-    let request = SenderKeyRequest { recipients: ids(&[1, 2]), story: false, group: true, auth: None, now_ms: T, partial: false };
+    let request = SenderKeyRequest { recipients: ids(&[1, 2]), story: false, group: true, auth: None, now_ms: T, partial: false, members: None };
     let error = run(&mut fake, &mut info, &request).unwrap_err();
     assert!(matches!(error, MessageSenderError::MissingGroupSendToken));
     assert!(error.sender_key_may_fall_over());
@@ -608,6 +608,7 @@ fn group_message_sends_with_a_token() {
         auth: Some(GroupSendAuth { endorsements: &issued.endorsements, group_secret_params: issued.group, our_aci: aci(1) }),
         now_ms: NOW * 1000,
         partial: false,
+        members: None,
     };
     let outcome = run(&mut fake, &mut info, &request).unwrap();
     assert_eq!(outcome.sent, ids(&[2, 3, 4]));
@@ -624,7 +625,7 @@ fn group_message_sends_with_a_token() {
 fn group_story_needs_no_token() {
     let mut fake = Fake::with_sessions(&[(1, &[(1, 11)]), (2, &[(1, 21)])]);
     let mut info = SenderKeyInfo::new(T);
-    let request = SenderKeyRequest { recipients: ids(&[1, 2]), story: true, group: true, auth: None, now_ms: T, partial: false };
+    let request = SenderKeyRequest { recipients: ids(&[1, 2]), story: true, group: true, auth: None, now_ms: T, partial: false, members: None };
     run(&mut fake, &mut info, &request).unwrap();
     assert!(!fake.skdms[0].2);
     assert_eq!(fake.sends[0].2, MultiRecipientAuth::Story);
@@ -832,6 +833,29 @@ fn partial_send_keeps_the_key_for_those_left_out() {
     assert_eq!(info.member_devices.len(), 4);
     // The same subset as a whole send: 1 and 3 left, so a new key.
     run(&mut fake, &mut info, &story(&[2, 4])).unwrap();
+    assert_ne!(info.distribution_id, old);
+}
+
+/// A member left out of a whole send (no longer registered, or blocked)
+/// is still a member: Desktop's step 7 asks `hasMember`, so no new key,
+/// and their devices are dropped from those holding it; once sent to
+/// again, they get the same key.
+#[test]
+fn members_left_out_keep_the_key_without_a_reset() {
+    let mut fake = Fake::with_sessions(&[(1, &[(1, 11)]), (2, &[(1, 21)]), (3, &[(1, 31)])]);
+    let mut info = SenderKeyInfo::new(T);
+    run(&mut fake, &mut info, &story(&[1, 2, 3])).unwrap();
+    let old = info.distribution_id;
+    let in_group = |r: &[u8]| SenderKeyRequest { members: Some(ids(&[1, 2, 3])), ..story(r) };
+    let outcome = run(&mut fake, &mut info, &in_group(&[1, 2])).unwrap();
+    assert_eq!(outcome.sent, ids(&[1, 2]));
+    assert_eq!(info.distribution_id, old, "3 is still in the group");
+    assert_eq!(info.member_devices.len(), 2, "3's device is forgotten");
+    run(&mut fake, &mut info, &in_group(&[1, 2, 3])).unwrap();
+    assert_eq!(info.distribution_id, old);
+    assert_eq!(fake.skdms.last().unwrap(), &(ids(&[3]), old, true));
+    // Out of the group too: a new key.
+    run(&mut fake, &mut info, &SenderKeyRequest { members: Some(ids(&[1, 2])), ..story(&[1, 2]) }).unwrap();
     assert_ne!(info.distribution_id, old);
 }
 

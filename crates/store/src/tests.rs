@@ -938,6 +938,13 @@ async fn registration_is_kept_per_person() {
     assert!(c.ever_unregistered() && c.unregistered(now + 1));
     // After six hours they're offered again, but the composer still says so.
     assert!(!c.unregistered(now + 6 * 3600 * 1000) && c.ever_unregistered());
+    // Group sends leave them out for those six hours, and the blocked always.
+    db.insert_message(&incoming("d:b", "b", 2, "hi")).await.unwrap();
+    db.insert_message(&incoming("d:c", "c", 3, "hi")).await.unwrap();
+    db.set_blocked(&conv("d:b"), true).await.unwrap();
+    let left_out = db.left_out_of_group_sends(now + 1).await.unwrap();
+    assert_eq!(left_out, ["a".to_owned(), "b".to_owned()].into_iter().collect());
+    assert_eq!(db.left_out_of_group_sends(now + 6 * 3600 * 1000).await.unwrap(), ["b".to_owned()].into_iter().collect());
     // An older finding doesn't move it back.
     assert!(!db.set_registration(&[], &[("a".into(), now - 1)]).await.unwrap());
     assert!(db.set_registration(&["a".into()], &[]).await.unwrap());

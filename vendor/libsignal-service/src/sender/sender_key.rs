@@ -163,7 +163,13 @@ pub struct SenderKeyRequest<'a> {
     /// `recipients` are only some of the group or list (Desktop's
     /// `isPartialSend`, a retry to those an earlier send missed): those
     /// left out keep our key, and aren't taken to have left.
-    pub partial: bool,
+    pub partial: bool,    /// Everyone still in the group (not us), recipients or not; `None`:
+    /// the recipients. Someone who had our key and isn't sent to now
+    /// only gets a new key made when they're not among these (Desktop's
+    /// `conversation.hasMember` in step 7); a member left out of the send,
+    /// such as one no longer registered, just has their devices dropped
+    /// from those holding it.
+    pub members: Option<Vec<ServiceId>>,
 }
 
 /// How a sender key send went.
@@ -241,6 +247,10 @@ pub async fn send_via_sender_key<T: SenderKeyTransport>(
     }
     let members: HashSet<ServiceId> =
         request.recipients.iter().copied().collect();
+    let still_members: HashSet<ServiceId> = match &request.members {
+        Some(all) => all.iter().copied().collect(),
+        None => members.clone(),
+    };
     // Started sessions with already, and couldn't give our key to.
     let mut fetched: HashSet<ServiceId> = HashSet::new();
     let mut unreachable: Vec<ServiceId> = Vec::new();
@@ -320,7 +330,7 @@ pub async fn send_via_sender_key<T: SenderKeyTransport>(
         if changes
             .removed_service_ids
             .iter()
-            .any(|s| !members.contains(s))
+            .any(|s| !still_members.contains(s))
         {
             info!("a recipient left; resetting the sender key");
             info.reset(request.now_ms);

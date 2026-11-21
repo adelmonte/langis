@@ -219,7 +219,10 @@ and `checkAccountExistence`). A send that reaches them, or a message from
 them, clears it. `Conversation::ever_unregistered()` is Desktop's test for
 replacing the composer with "This person isn't using Signal" and hiding the
 call buttons; `unregistered(now)` (found in the last six hours) is its test
-for leaving them out of the people offered for a new chat or group.
+for leaving them out of the people offered for a new chat or group. Group
+messages leave out such members, and blocked ones, as Desktop's
+`getConversationMembers` does (`AppDb::left_out_of_group_sends`): they get
+no send state for that message, and our sender key isn't replaced for it.
 
 **Removing a person.** `ChatChange::Removed(true)` is Desktop's "Remove" on
 a contact row (`removeContact`): their chat's `removal_stage` becomes

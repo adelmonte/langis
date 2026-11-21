@@ -60,7 +60,10 @@ Changes:
   `send_message_to_group_members` does, those it went to one by one
   included. All three share one body, and `send_message_to_group` behaves
   as before. Members we have no profile key for get a one-recipient
-  `Group-Send-Token` in place of the access key.
+  `Group-Send-Token` in place of the access key. Its `left_out` members
+  (those Desktop's `getConversationMembers` skips: unregistered or
+  blocked) get nothing and no result, and stay members for the sender
+  key, so leaving them out makes no new key.
   `Manager::send_story_with_sender_key` sends a story to many at once.
   `Manager::group_send_endorsements` fetches the group with its
   endorsements (`GET /v2/groups/`) and saves the group.
@@ -166,7 +169,9 @@ this revision on 2026-11-05. Changes:
   Signal Desktop's `sendToGroupViaSenderKey` loop behind a
   `SenderKeyTransport` trait (so it's tested without a network), the
   `SenderKeyInfo` it updates, partial sends (`isPartialSend`: those left
-  out keep our key), and the sealed sender v2 payload.
+  out keep our key), `SenderKeyRequest::members` (everyone still in the
+  group, so a member not sent to isn't taken to have left, as Desktop's
+  `hasMember` check), and the sealed sender v2 payload.
   `src/sender.rs`: `MessageSender::send_message_to_group_with_sender_key`
   (falls over to one by one as Desktop's `_shouldFailSend` allows, and
   reports each recipient's result with their service id) and

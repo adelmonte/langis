@@ -2223,6 +2223,22 @@ impl AppDb {
         Ok(changed > 0)
     }
 
+    /// The people a group message leaves out, as Desktop's
+    /// `getConversationMembers`: those we blocked and those found
+    /// unregistered in the last six hours ([`Conversation::unregistered`]),
+    /// by service id. Everyone else, a member without a chat included, is
+    /// sent to.
+    pub async fn left_out_of_group_sends(&self, now_millis: i64) -> Result<std::collections::HashSet<String>> {
+        const SIX_HOURS: i64 = 6 * 3600 * 1000;
+        let ids: Vec<String> = sqlx::query_scalar(
+            "SELECT substr(id, 3) FROM conversations WHERE kind = 'direct' AND (blocked = 1 OR unregistered_at > ?)",
+        )
+        .bind(now_millis - SIX_HOURS)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(ids.into_iter().collect())
+    }
+
     /// Desktop's `removeContact`: a person's removal stage becomes
     /// `justNotification`. False when they were removed already, or the
     /// chat isn't a person's.
