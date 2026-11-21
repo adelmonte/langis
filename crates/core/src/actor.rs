@@ -2779,20 +2779,29 @@ impl Actor {
             ChatChange::Blocked(on) => self.db.set_blocked(&conversation, on).await,
             ChatChange::HideStory(on) => self.set_story_hidden(&conversation, on).await,
             ChatChange::DontNotifyMentions(on) => self.db.set_dont_notify_mentions(&conversation, on).await,
+            ChatChange::Notify(kind, value) => self.db.set_chat_notify(&conversation, kind, value).await,
         };
         if let Err(error) = local {
             return self.error("failed to update chat", error);
         }
         self.emit(Event::ConversationsChanged);
-        let edit = match change {
-            ChatChange::Archived(on) => storage::ChatEdit::Archived(on),
-            ChatChange::MutedUntil(until) => storage::ChatEdit::MutedUntil(until.max(0) as u64),
-            ChatChange::MarkedUnread(on) => storage::ChatEdit::MarkedUnread(on),
-            ChatChange::Blocked(on) => storage::ChatEdit::Blocked(on),
-            ChatChange::HideStory(on) => storage::ChatEdit::HideStory(on),
-            ChatChange::DontNotifyMentions(on) => storage::ChatEdit::DontNotifyMentions(on),
+        // Mentions are written in both their old and new fields, as
+        // Desktop's `toGroupV2Record` does.
+        use langis_store::ChatNotifyKind;
+        let mentions = |off: bool| [storage::ChatEdit::DontNotifyMentions(off), storage::ChatEdit::Notify(ChatNotifyKind::Mentions, off.then_some(false))];
+        let edits: Vec<storage::ChatEdit> = match change {
+            ChatChange::Archived(on) => vec![storage::ChatEdit::Archived(on)],
+            ChatChange::MutedUntil(until) => vec![storage::ChatEdit::MutedUntil(until.max(0) as u64)],
+            ChatChange::MarkedUnread(on) => vec![storage::ChatEdit::MarkedUnread(on)],
+            ChatChange::Blocked(on) => vec![storage::ChatEdit::Blocked(on)],
+            ChatChange::HideStory(on) => vec![storage::ChatEdit::HideStory(on)],
+            ChatChange::DontNotifyMentions(on) => mentions(on).to_vec(),
+            ChatChange::Notify(ChatNotifyKind::Mentions, value) => {
+                vec![storage::ChatEdit::DontNotifyMentions(value == Some(false)), storage::ChatEdit::Notify(ChatNotifyKind::Mentions, value)]
+            }
+            ChatChange::Notify(kind, value) => vec![storage::ChatEdit::Notify(kind, value)],
         };
-        match storage::write_chat(&manager, &conversation, edit).await {
+        match storage::write_chat_all(&manager, &conversation, &edits).await {
             Ok(()) => self.storage_written(),
             Err(error) => {
                 self.error("couldn't update the chat on your other devices", format!("{error:#}"));

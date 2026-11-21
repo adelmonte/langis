@@ -671,11 +671,14 @@ impl Actor {
     }
 
     /// Whether a call in `conversation` rings: not when it's muted, unless
-    /// calls notify while muted (Desktop's `notifyForCallsIfMuted`, off by
-    /// default).
+    /// calls notify while muted there (Desktop's `notifyForCallsIfMuted`,
+    /// the chat's own or else the account's, off by default).
     pub(super) async fn calls_ring_in(&self, conversation: &ConversationId) -> bool {
-        let muted = self.db.conversation(conversation).await.ok().flatten().is_some_and(|c| c.muted);
-        !muted || self.setting_on(AccountSetting::NotifyCallsIfMuted).await
+        let Some(chat) = self.db.conversation(conversation).await.ok().flatten().filter(|c| c.muted) else { return true };
+        match chat.notify.calls {
+            Some(on) => on,
+            None => self.setting_on(AccountSetting::NotifyCallsIfMuted).await,
+        }
     }
 
     /// Desktop's call event sync: how a 1:1 call went, for our other devices'

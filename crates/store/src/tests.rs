@@ -766,6 +766,7 @@ async fn chat_states_apply_to_existing_conversations_only() {
         marked_unread: false,
         blocked: false,
         dont_notify_mentions: false,
+        notify: ChatNotify::default(),
     };
 
     let past = 1_000;
@@ -930,7 +931,7 @@ async fn clearing_forgets_the_whole_account() {
 async fn marked_unread_and_blocked_flags() {
     let db = test_db().await;
     db.insert_message(&incoming("d:a", "a", 1, "hi")).await.unwrap();
-    let state = ChatState { id: conv("d:a"), archived: false, muted_until: 0, marked_unread: true, blocked: true, dont_notify_mentions: true };
+    let state = ChatState { id: conv("d:a"), archived: false, muted_until: 0, marked_unread: true, blocked: true, dont_notify_mentions: true, notify: ChatNotify { mentions: Some(false), ..Default::default() } };
     assert!(db.apply_chat_states(std::slice::from_ref(&state)).await.unwrap());
     assert!(!db.apply_chat_states(&[state]).await.unwrap());
     let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
@@ -944,7 +945,46 @@ async fn marked_unread_and_blocked_flags() {
     let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
     assert!(!c.blocked && c.blocked_at.is_none());
     db.set_dont_notify_mentions(&conv("d:a"), false).await.unwrap();
-    assert!(!db.conversation(&conv("d:a")).await.unwrap().unwrap().dont_notify_mentions);
+    let c = db.conversation(&conv("d:a")).await.unwrap().unwrap();
+    assert!(!c.dont_notify_mentions && c.notify.mentions.is_none());
+}
+
+#[tokio::test]
+async fn chat_notify_settings_follow_the_account_until_set() {
+    let db = test_db().await;
+    db.insert_message(&incoming("g:a", "a", 1, "hi")).await.unwrap();
+    let id = conv("g:a");
+    assert_eq!(db.conversation(&id).await.unwrap().unwrap().notify, ChatNotify::default());
+    db.set_chat_notify(&id, ChatNotifyKind::Calls, Some(true)).await.unwrap();
+    db.set_chat_notify(&id, ChatNotifyKind::Replies, Some(false)).await.unwrap();
+    db.set_chat_notify(&id, ChatNotifyKind::UnreadReminders, Some(true)).await.unwrap();
+    let c = db.conversation(&id).await.unwrap().unwrap();
+    assert_eq!(c.notify, ChatNotify { calls: Some(true), mentions: None, replies: Some(false), unread_reminders: Some(true) });
+    // Unset follows the account; set wins over it.
+    assert!(c.notify.on(ChatNotifyKind::Mentions, |_| true) && !c.notify.on(ChatNotifyKind::Mentions, |_| false));
+    assert!(!c.notify.on(ChatNotifyKind::Replies, |_| true));
+    // Mentions off is the old "Don't notify" too, and back on clears it.
+    db.set_chat_notify(&id, ChatNotifyKind::Mentions, Some(false)).await.unwrap();
+    assert!(db.conversation(&id).await.unwrap().unwrap().dont_notify_mentions);
+    db.set_chat_notify(&id, ChatNotifyKind::Mentions, Some(true)).await.unwrap();
+    let c = db.conversation(&id).await.unwrap().unwrap();
+    assert!(!c.dont_notify_mentions && c.notify.mentions == Some(true));
+    db.set_dont_notify_mentions(&id, true).await.unwrap();
+    assert_eq!(db.conversation(&id).await.unwrap().unwrap().notify.mentions, Some(false));
+    db.set_chat_notify(&id, ChatNotifyKind::Calls, None).await.unwrap();
+    assert_eq!(db.conversation(&id).await.unwrap().unwrap().notify.calls, None);
+    // Synced state replaces them all.
+    let state = ChatState { id: id.clone(), archived: false, muted_until: 0, marked_unread: false, blocked: false, dont_notify_mentions: false, notify: ChatNotify { replies: Some(true), ..Default::default() } };
+    assert!(db.apply_chat_states(std::slice::from_ref(&state)).await.unwrap());
+    assert!(!db.apply_chat_states(&[state.clone()]).await.unwrap());
+    assert_eq!(db.conversation(&id).await.unwrap().unwrap().notify, state.notify);
+}
+
+#[test]
+fn legacy_mentions_resolve_as_desktop() {
+    assert_eq!(resolve_legacy_mentions(true, Some(true)), Some(false));
+    assert_eq!(resolve_legacy_mentions(false, None), None);
+    assert_eq!(resolve_legacy_mentions(false, Some(false)), Some(true));
 }
 
 #[tokio::test]
@@ -1183,7 +1223,7 @@ async fn drop_later_migrations(db: &AppDb) {
     sqlx::query("ALTER TABLE messages DROP COLUMN content").execute(&db.writer).await.unwrap();
     sqlx::query("DROP TABLE sticker_packs").execute(&db.writer).await.unwrap();
     sqlx::query("ALTER TABLE messages DROP COLUMN edit_history").execute(&db.writer).await.unwrap();
-    for column in ["dont_notify_mentions", "blocked_at"] {
+    for column in ["notify_calls_if_muted", "notify_mentions_if_muted", "notify_replies_if_muted", "show_unread_reminders", "dont_notify_mentions", "blocked_at"] {
         sqlx::query(AssertSqlSafe(format!("ALTER TABLE conversations DROP COLUMN {column}"))).execute(&db.writer).await.unwrap();
     }
 }

@@ -181,6 +181,17 @@ here at once and on other devices through Storage Service. A
 `Conversation` carries them back, with `blocked_at` (when it was blocked)
 and a person's profile `about`.
 
+`ChatChange::Notify(kind, value)` sets one of Desktop's per-chat "While
+muted" switches (calls; mentions and replies for groups) or its unread
+reminders, kept in `Conversation::notify` (`ChatNotify`). `None` follows
+the account setting `AccountSetting::for_chat(kind)`; use
+`ChatNotify::on(kind, ...)` with the account settings to decide. Mentions
+off also sets `dont_notify_mentions`. The core rings for a call in a
+muted chat only when calls are on there; message notifications are yours:
+for a muted chat, notify only a group's mention (`Event::Incoming`'s
+`mentions_me`) or reply to us (`replies_to_me`) whose kind is on, as
+Desktop's `maybeNotify` does.
+
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
 Signal Desktop. The core enforces it: a send that would use a verified

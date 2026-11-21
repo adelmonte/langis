@@ -233,6 +233,17 @@ impl AccountSetting {
         matches!(self, Self::ReactionNotifications | Self::NotifyMentionsIfMuted | Self::NotifyRepliesIfMuted)
     }
 
+    /// The account setting a chat's own `kind` falls back to.
+    pub fn for_chat(kind: langis_store::ChatNotifyKind) -> Self {
+        use langis_store::ChatNotifyKind as K;
+        match kind {
+            K::Calls => Self::NotifyCallsIfMuted,
+            K::Mentions => Self::NotifyMentionsIfMuted,
+            K::Replies => Self::NotifyRepliesIfMuted,
+            K::UnreadReminders => Self::ShowUnreadReminders,
+        }
+    }
+
     /// Whether it's on, from its stored value.
     pub fn is_on(self, value: Option<&str>) -> bool {
         match value {
@@ -859,6 +870,10 @@ pub enum ChatChange {
     /// A group's mentions while it's muted: `true` is Desktop's "Don't
     /// notify" (`dontNotifyForMentionsIfMuted`).
     DontNotifyMentions(bool),
+    /// One of its "While muted" settings or its unread reminders
+    /// (`langis_store::ChatNotify`); `None` follows the account setting
+    /// ([`AccountSetting::for_chat`]). Mentions and replies are for groups.
+    Notify(langis_store::ChatNotifyKind, Option<bool>),
 }
 
 /// A story list (Desktop's distribution list), from Storage Service.
