@@ -1106,6 +1106,13 @@ pub struct CallParticipant {
     /// `speaker_time`). Desktop puts presenters first, then the most recent
     /// speaker, to choose who's large in speaker view.
     pub speaker_time: Option<i64>,
+    /// We have their media keys (RingRTC's `media_keys_received`). Desktop
+    /// shows "Can't receive audio and video from {name}" in their tile when
+    /// they're still missing 5 seconds after the later of their `added_at`
+    /// and our joining (`GroupCallRemoteParticipant`).
+    pub media_keys: bool,
+    /// When they joined the call, in Unix milliseconds.
+    pub added_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

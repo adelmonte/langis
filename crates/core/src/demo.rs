@@ -1018,6 +1018,10 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                             audio: ix % 2 == 0,
                             presenting: false,
                             speaker_time: None,
+                            // The fourth's keys never came: Desktop's
+                            // "Can't receive audio and video" tile.
+                            media_keys: ix != 3,
+                            added_at: 0,
                         })
                         .collect(),
                     ringer: None,
@@ -1202,7 +1206,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 link.pending.retain(|p| *p != who);
                 if approve {
                     let demux_id = update.participants.len() as u32 + 1;
-                    update.participants.push(crate::CallParticipant { aci: who, demux_id, video: false, audio: true, presenting: false, speaker_time: None });
+                    update.participants.push(crate::CallParticipant { aci: who, demux_id, video: false, audio: true, presenting: false, speaker_time: None, media_keys: true, added_at: now() });
                 }
                 emit(Event::Call(Some(update.clone())));
             }

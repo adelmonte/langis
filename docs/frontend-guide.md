@@ -260,6 +260,9 @@ In a group call, `update.participants` lists the others, one entry per
 device. Each has `video`, `audio` and `presenting`, and `speaker_time`
 (when they were last the main speaker, Unix milliseconds) for ordering
 tiles as Desktop does: presenters first, then the most recent speaker.
+`media_keys` is false while we lack their media keys, so can't decrypt
+them; Desktop's tile says "Can't receive audio and video from {name}" once
+that has lasted 5 seconds past the later of their `added_at` and our join.
 
 Video doesn't go through events. `backend.call_video()` holds the latest
 frames: `remote`, `local` (your camera, mirrored) and `group` (one per

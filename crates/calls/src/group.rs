@@ -27,6 +27,8 @@ pub struct Participant {
     /// When they last were the main speaker (for ordering, as Desktop does).
     pub speaker_time: Option<SystemTime>,
     pub added_time: SystemTime,
+    /// We have their media keys, so can decrypt their audio and video.
+    pub media_keys_received: bool,
 }
 
 impl From<&RemoteDeviceState> for Participant {
@@ -40,6 +42,7 @@ impl From<&RemoteDeviceState> for Participant {
             presenting: beat.presenting.unwrap_or(false) || beat.sharing_screen.unwrap_or(false),
             speaker_time: state.speaker_time,
             added_time: state.added_time,
+            media_keys_received: state.media_keys_received,
         }
     }
 }
