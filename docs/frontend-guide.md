@@ -147,6 +147,7 @@ Most events carry ids, not data. React by re-reading:
 | `Typing { conversation, author, started }` | Show or hide "typing..." |
 | `AccountSettingsChanged` | `setting(...)` for what you show |
 | `ChatColorsChanged` (after `Command::EditChatColors`) | `chat_colors()` |
+| `NotificationProfilesChanged` | `notification_profile_state(now)`, `notification_profiles()` |
 | `Error(text)` | Show it |
 
 Commands that ask a question answer with their own event, named in the
@@ -198,6 +199,34 @@ for each of them, then `Command::RetrySend` for a failed message.
 is false (Desktop's `Linkify`); a sneaky one (credentials in it, an IP
 address, mixed scripts in the domain, odd characters in the path) stays
 plain text.
+
+**Notification profiles** (Desktop's Settings > Notifications >
+Notification profiles). A profile names the people and groups whose
+notifications still come while it's on, and can let every call
+(`allow_all_calls`) and every mention or reply (`allow_all_mentions`)
+through. It turns on by a weekly schedule (`schedule_start` and
+`schedule_end` as hhmm, `schedule_days` Monday first; an end at or before
+the start runs into the next day) or by hand. Read them with
+`AppDb::notification_profiles()` (newest first, deleted ones with
+`deleted_at` set; `langis_store::current_profiles` drops those) and ask
+which is on with `AppDb::notification_profile_state(now)`: the profile on,
+and `next_change`, when to ask again. `AppDb::notification_silenced(chat,
+is_call, mention_or_reply, now)` (or `langis_store::should_notify` with the
+active profile in hand) says whether to stay quiet; Desktop also leaves
+chats the profile doesn't allow out of the unread badge, as it does muted
+ones.
+
+Change them with `Command::EditNotificationProfiles`:
+`NotificationProfileEdit::Save(profile)` adds or replaces one (a new one
+takes `langis_core::new_notification_profile_id()` and
+`NotificationProfile::new`, Desktop's defaults), `Delete { id, at }`,
+`Enable { id, ends_at, at }` turns one on until `ends_at` or until its
+schedule next turns it off, and `Disable { at }` turns profiles off until a
+schedule next turns one on. `Event::NotificationProfilesChanged` follows,
+for this device's changes and other devices' (each profile is a Storage
+Service `NotificationProfile` record; the manual override is in the
+account record). Desktop's "Sync across devices" switch isn't there: they
+always sync.
 
 Mark a chat read when the user looks at it: `Command::MarkRead { conversation }`.
 That also tells the phone and, with read receipts on, the sender.

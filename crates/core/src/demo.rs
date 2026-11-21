@@ -533,6 +533,12 @@ async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()> {
     // Desktop's "All chats" folder, as a sync would make it; no custom
     // folder, so the chat list shows none until one is made.
     db.edit_chat_folders(langis_store::ChatFolderEdit::EnsureAll { id: "00000000-0000-4000-8000-00000000f01d".into() }).await?;
+    // One notification profile, off and unscheduled, letting Maya through.
+    let mut work = langis_store::NotificationProfile::new("00000000000000000000000000000f0c".into(), "Work".into(), 1);
+    work.emoji = Some("💪".into());
+    work.color = 0xffdbe9fe;
+    work.allowed_members.push(ConversationId(MAYA.into()));
+    db.edit_notification_profiles(langis_store::NotificationProfileEdit::Save(work)).await?;
     seed_calls(db, now).await?;
     Ok(())
 }
@@ -2443,6 +2449,14 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
             Command::EditChatColors(edit) => {
                 if let Ok(true) = db.edit_chat_colors(edit).await {
                     emit(Event::ChatColorsChanged);
+                }
+            }
+            Command::EditNotificationProfiles(edit) => {
+                // As here, without Storage Service.
+                if let Ok(changes) = db.edit_notification_profiles(edit).await
+                    && !changes.is_empty()
+                {
+                    emit(Event::NotificationProfilesChanged);
                 }
             }
             Command::EditChatFolders(edit) => {

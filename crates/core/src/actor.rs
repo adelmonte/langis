@@ -4,6 +4,7 @@
 mod call_log;
 mod catch_up;
 mod chat_folders;
+mod notification_profiles;
 mod content;
 mod call_links;
 mod calls;
@@ -1241,6 +1242,7 @@ impl Actor {
                 Command::ResetUsernameLink => self.reset_username_link().await,
                 Command::SetUsernameLinkColor(color) => self.set_username_link_color(color).await,
                 Command::EditChatFolders(edit) => self.edit_chat_folders(edit).await,
+                Command::EditNotificationProfiles(edit) => self.edit_notification_profiles(edit).await,
                 Command::EditChatColors(edit) => match self.db.edit_chat_colors(edit).await {
                     Ok(true) => self.emit(Event::ChatColorsChanged),
                     Ok(false) => {}
@@ -2886,6 +2888,7 @@ impl Actor {
             chat_folders,
             sticker_packs,
             favorite_stickers,
+            notification_profiles,
         } = match storage::fetch(manager).await {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -2925,6 +2928,7 @@ impl Actor {
         }
         self.apply_storage_call_links(call_links).await;
         self.apply_storage_chat_folders(chat_folders).await;
+        self.apply_storage_notification_profiles(notification_profiles).await;
         self.apply_storage_sticker_packs(sticker_packs).await;
         self.apply_storage_favorite_stickers(favorite_stickers, favorite_changes).await;
         if let Err(error) = self.db.apply_profile_sharing(&profile_sharing).await {
