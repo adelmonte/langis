@@ -28,6 +28,7 @@ mod poll;
 mod profile;
 mod reminders;
 mod send_states;
+mod hidden_sticker_packs;
 mod sticker_favorites;
 mod sticker_packs;
 mod stories;
@@ -47,6 +48,7 @@ pub use poll::*;
 pub use profile::*;
 pub use reminders::*;
 pub use send_states::*;
+pub use hidden_sticker_packs::*;
 pub use sticker_favorites::*;
 pub use sticker_packs::*;
 pub use stories::*;
@@ -235,6 +237,15 @@ pub struct Quote {
     /// It quotes a story (a reply to one, one to one).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub story: bool,
+    /// A private reply (Desktop's, commit 98032f987): it quotes a message
+    /// in this group, from a 1:1 chat with its author. Its original is
+    /// found there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<ConversationId>,
+    /// A private reply whose group isn't known here (Desktop's
+    /// `isPrivateReplyGroupUnknown`, "Unknown group").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub group_unknown: bool,
 }
 
 /// What a quote knows of the quoted attachment (Signal's
@@ -3614,13 +3625,17 @@ impl AppDb {
     }
 
     /// Records that a video was re-encoded before it was sent (with its new
-    /// size) or that that was tried and failed (`None`), so it isn't again;
+    /// size, and `video/mp4`) or that that was tried and failed (`None`),
+    /// so it isn't again;
     /// `Ok(false)` as for `set_attachment_path`.
     pub async fn finish_attachment_transcode(&self, message_id: i64, index: usize, size: Option<u64>) -> Result<bool> {
         self.edit_attachment(message_id, None, index, |att| {
             att.transcode = false;
             if let Some(size) = size {
                 att.size = size;
+                // What comes out is an MP4, whatever went in (a .mov,
+                // WebM): Desktop's `transcodeVideo` sets `VIDEO_MP4`.
+                att.content_type = "video/mp4".into();
             }
         })
         .await

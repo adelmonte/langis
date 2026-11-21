@@ -204,6 +204,25 @@ and formatting as `SendFile`'s). `Forward { message_ids, conversations, body }` 
 messages to other chats; `body` is a single message's text as edited
 before sending (Desktop's forward editor), `None` to send it unchanged.
 
+**Hidden sticker packs** (Desktop commits 5edf85d87, 8049395d9): while
+`RemoteConfig::sticker_pack_hiding` is on, a pack in the sticker manager's
+"Shared With You" can be hidden with `Command::SetStickerPackHidden`
+(`hidden: false` undoes it); `Event::StickerPackHidden` follows, and the
+next `Event::StickerManager` leaves it out. Hidden packs sync through
+Storage Service and come with transferred history, as do favorite
+stickers; installing a pack shows it again.
+
+**Private replies** (Desktop's "Reply privately", commit 98032f987):
+open the 1:1 chat with a group message's author and send with `quote` set
+to that group message's id. It goes as a private reply, its quote naming
+the group, while `RemoteConfig::private_reply_send` is on and the message
+is someone else's in a group; otherwise the quote is left off. Desktop
+offers it for an incoming, not deleted message in an accepted group that
+isn't blocked, from an author who isn't blocked. A stored private reply's
+`Quote` has `group` set (its original is in that chat) or, when we don't
+have the group, `group_unknown` (Desktop's "Unknown group"). Received and
+transferred private replies come the same way.
+
 Chat state changes go through `Command::SetChat { conversation, change }`
 (archive, mute, mark unread, block, hide stories, and a group's
 `DontNotifyMentions`, Desktop's "Mentions: Don't notify" while muted),
@@ -301,15 +320,19 @@ Desktop's `maybeNotify`. A removed contact's chat gets none either.
 
 **Call quality survey.** After a call ends, `Event::CallQualitySurvey`
 (`call_survey::CallSurvey`: the chat, Desktop's call type, when it
-connected and ended, whether it failed) asks for Desktop's "How was your
+connected and ended, whether it failed, and RingRTC's statistics) asks for Desktop's "How was your
 call?" dialog, as Desktop decides (`ts/util/callQualitySurvey.dom.ts`):
 only for calls RingRTC marks a survey candidate (it connected), at most
 daily, always for a failed call unless one was asked about within a day,
 else for the share of calls in the remote config's
 `desktop.callQualitySurveyPPM` for our number's country (1% without it).
-There's no command to submit it: Desktop sends the answers to Signal's
-gRPC `CallQuality` service over libsignal-net's chat connection, which
-langis doesn't have, so the answers stay with the frontend.
+Send the answers back with `Command::SubmitCallQualitySurvey` (the
+survey from the event, whether it went well, Desktop's issue values, the
+description for `other`, and optionally an uploaded debug log's URL);
+`Event::CallQualitySurveySent` says whether it went. They go as
+`PUT /v1/call_quality_survey` on the unauthenticated connection, the REST
+route Desktop used before moving to libsignal-net's gRPC service (Desktop
+commit 97a1b1ef6); not tested against the live server.
 
 **Safety numbers.** If the user marked someone verified and their safety
 number changes, sends to them are held until the user confirms, as in
@@ -379,8 +402,9 @@ A message's `attachments` list each file's type, size and dimensions.
 then a photo or video's `blurhash`, when the sender gave one, can be drawn
 blurred in its place. By default
 everything downloads on its own; `Command::SetAutoDownload` turns that off
-per kind (photos, videos, audio, documents), and stickers and short voice
-messages always come. Anything not downloaded waits for
+per kind (photos, videos, audio, documents), and stickers and voice
+messages within 100 KiB always come (bigger ones follow photos and audio);
+a sticker over 1 MiB never downloads. Anything not downloaded waits for
 `Command::FetchAttachment { message_id, index }`. `MessageChanged` follows
 when the file is ready.
 A link preview's image downloads as photos do; when that setting leaves it,
@@ -420,9 +444,10 @@ Our own story's `failed` lists who its send didn't reach (Desktop's "Send
 failed" when that's everyone, "Partially sent" otherwise);
 `Command::RetryStory { id }` sends it to them again.
 
-Videos (MP4, Ogg, WebM) are re-encoded to H.264 at Desktop's sizes before
-upload when `ffmpeg` with libx264 is on `PATH`; the message shows as sending
-meanwhile. Without ffmpeg the original goes.
+Videos (MP4, QuickTime `.mov`, Ogg, WebM) are re-encoded to H.264 at
+Desktop's sizes before upload when `ffmpeg` with libx264 is on `PATH`; the
+message shows as sending meanwhile, and once re-encoded the attachment's
+`content_type` is `video/mp4`. Without ffmpeg the original goes.
 
 ## Backups
 

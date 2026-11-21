@@ -474,6 +474,29 @@ pub enum Command {
     /// Installed packs in this order (Desktop's drag to reorder), saved for
     /// our other devices.
     OrderStickerPacks(Vec<Vec<u8>>),
+    /// Hides a received pack from the sticker manager's "Shared With You",
+    /// or (`hidden: false`, the toast's Undo) shows it again, here and on
+    /// our other devices (its `HiddenStickerPackRecord`; Desktop's
+    /// `markStickerPackAsHidden`). Hiding an installed pack uninstalls it
+    /// first; installing a pack shows it again. Answered with
+    /// `Event::StickerPackHidden`. Offered only while
+    /// `RemoteConfig::sticker_pack_hiding` is on.
+    SetStickerPackHidden { id: Vec<u8>, key: Vec<u8>, hidden: bool },
+    /// The answers to `Event::CallQualitySurvey`, sent to Signal with the
+    /// call's statistics (Desktop's `submitCallQualitySurvey`): whether it
+    /// went well, the issues as Desktop's `CallQualitySurvey.Issue` values
+    /// (`audio`, `audio_stuttering`, `audio_local_echo`,
+    /// `audio_remote_echo`, `audio_drop`, `video`, `video_no_camera`,
+    /// `video_low_quality`, `video_low_resolution`, `call_dropped`,
+    /// `other`), the description that goes with `other`, and an uploaded
+    /// debug log's URL. Answered with `Event::CallQualitySurveySent`.
+    SubmitCallQualitySurvey {
+        survey: call_survey::CallSurvey,
+        satisfied: bool,
+        issues: Vec<String>,
+        description: Option<String>,
+        debug_log_url: Option<String>,
+    },
     /// Favorites a sticker, or unfavorites it, here and on our other
     /// devices (its `FavoriteStickerRecord`; Desktop's
     /// `markStickerAsFavorite`). The pack needn't be installed.
@@ -1446,6 +1469,9 @@ pub enum Event {
     StickerUpload(sticker_upload::StickerUpload),
     /// What the sticker manager lists (answer to `Command::LoadStickerManager`).
     StickerManager(stickers::StickerManagerView),
+    /// `Command::SetStickerPackHidden` took (Desktop's "Sticker pack
+    /// hidden" toast, with Undo, or "Sticker pack unhidden").
+    StickerPackHidden { id: Vec<u8>, key: Vec<u8>, hidden: bool },
     /// A pack opened, or why it couldn't be (Desktop's "Error opening
     /// sticker pack").
     StickerPackPreview { id: Vec<u8>, result: Result<stickers::StickerPackPreview, String> },
@@ -1514,8 +1540,8 @@ pub enum Event {
     /// `Command::UnreadReminderShown`; until then it comes again hourly.
     UnreadReminder { conversation: ConversationId, reminder: langis_store::ReminderData },
     /// Ask "How was your call?" about a call that just ended (Desktop's
-    /// `shouldShowCallQualitySurvey`). Nothing is sent: Desktop submits to
-    /// Signal's gRPC call quality service, which langis can't reach.
+    /// `shouldShowCallQualitySurvey`); the answers go back with
+    /// `Command::SubmitCallQualitySurvey`.
     CallQualitySurvey(call_survey::CallSurvey),
     /// Settings > Backups (answer to `Command::RefreshBackupStatus`).
     BackupStatus(backups::BackupStatus),
@@ -1532,6 +1558,10 @@ pub enum Event {
     /// Desktop backups' settings changed (folder, last backup, confirmed
     /// key): read the `local_backup::SETTING_*` keys again.
     LocalBackupsChanged,
+    /// `Command::SubmitCallQualitySurvey` went (Desktop's "Thanks for your
+    /// feedback!") or failed (`Err`: why; Desktop's "Failed to submit
+    /// survey").
+    CallQualitySurveySent(Result<(), String>),
     Error(String),
     /// This device is no longer linked. After `Command::Unlink` the local
     /// account and history are gone. When the phone removed the device

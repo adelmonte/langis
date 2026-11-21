@@ -301,7 +301,7 @@ async fn delete_edit_attachments_and_search() {
         transcode: false,
         blurhash: None,
     }];
-    m.quote = Some(Quote { author: None, author_name: "You".into(), sent_at: 0, text: "q".into(), thumbnail: None, attachment: None, story: false });
+    m.quote = Some(Quote { author: None, author_name: "You".into(), sent_at: 0, text: "q".into(), thumbnail: None, attachment: None, story: false, group: None, group_unknown: false });
     let id = db.insert_message(&m).await.unwrap();
     let id2 = db.insert_message(&incoming("d:b", "b", 2, "Crème brûlée foxes")).await.unwrap();
 
@@ -317,15 +317,20 @@ async fn delete_edit_attachments_and_search() {
     assert_eq!(attachment.thumbnail_path.as_deref(), Some("/tmp/a-thumbnail.webp"));
     // A video still to be re-encoded keeps that mark until it's been tried.
     let mut video = incoming("d:v", "v", 3, "");
-    video.attachments = vec![AttachmentMeta { content_type: "video/mp4".into(), transcode: true, ..m.attachments[0].clone() }];
+    video.attachments = vec![AttachmentMeta { content_type: "video/quicktime".into(), transcode: true, ..m.attachments[0].clone() }];
     let video_id = db.insert_message(&video).await.unwrap();
     assert!(db.message(video_id).await.unwrap().unwrap().attachments[0].transcode);
     assert!(db.finish_attachment_transcode(video_id, 0, Some(4)).await.unwrap());
     let done = db.message(video_id).await.unwrap().unwrap().attachments[0].clone();
-    assert_eq!((done.transcode, done.size), (false, 4));
-    // Failed: the size stays.
-    assert!(db.finish_attachment_transcode(video_id, 0, None).await.unwrap());
-    assert_eq!(db.message(video_id).await.unwrap().unwrap().attachments[0].size, 4);
+    // Re-encoded: an MP4 now, whatever it was (Desktop's `transcodeVideo`).
+    assert_eq!((done.transcode, done.size, done.content_type.as_str()), (false, 4, "video/mp4"));
+    // Failed: the size and type stay.
+    let mut mov = incoming("d:v", "mov", 4, "");
+    mov.attachments = vec![AttachmentMeta { content_type: "video/quicktime".into(), transcode: true, size: 9, ..m.attachments[0].clone() }];
+    let mov_id = db.insert_message(&mov).await.unwrap();
+    assert!(db.finish_attachment_transcode(mov_id, 0, None).await.unwrap());
+    let kept = db.message(mov_id).await.unwrap().unwrap().attachments[0].clone();
+    assert_eq!((kept.transcode, kept.size, kept.content_type.as_str()), (false, 9, "video/quicktime"));
 
     let hits = db.search_messages("fox", 10).await.unwrap();
     assert_eq!(hits.iter().map(|h| h.message_id).collect::<Vec<_>>(), [id2, id]);
@@ -728,7 +733,7 @@ async fn rename_authors_updates_messages_and_quotes() {
     first.author_name = None;
     let first = db.insert_message(&first).await.unwrap();
     let mut reply = incoming("g:01", "amy", 2, "re");
-    reply.quote = Some(Quote { author: Some("jon".into()), author_name: "jon".into(), sent_at: 1, text: "hi".into(), thumbnail: None, attachment: None, story: false });
+    reply.quote = Some(Quote { author: Some("jon".into()), author_name: "jon".into(), sent_at: 1, text: "hi".into(), thumbnail: None, attachment: None, story: false, group: None, group_unknown: false });
     let reply = db.insert_message(&reply).await.unwrap();
 
     let mut authors = db.message_authors().await.unwrap();
@@ -2938,6 +2943,8 @@ async fn unread_reminders_find_who_wrote_mentioned_and_replied() {
         thumbnail: None,
         attachment: None,
         story: false,
+        group: None,
+        group_unknown: false,
     };
     // received_at is sent_at + 5.
     db.insert_message(&incoming("g:aa", "alice", 100, "hi")).await.unwrap();
@@ -3262,6 +3269,25 @@ async fn favorite_stickers_stop_at_the_limit() {
     assert_eq!(db.favorite_sticker("bb", "k", 1, 5).await.unwrap(), Favorited::Full);
     db.unfavorite_sticker("aa", 0, 6).await.unwrap();
     assert!(matches!(db.favorite_sticker("bb", "k", 1, 7).await.unwrap(), Favorited::Added(_)));
+}
+
+#[tokio::test]
+async fn favorite_stickers_import_from_a_backup_up_to_the_limit() {
+    let db = test_db().await;
+    db.favorite_sticker("aa", "k1", 3, 10).await.unwrap();
+    db.unfavorite_sticker("aa", 3, 11).await.unwrap();
+    let import = |pack: &str, id: u32, at: i64| ImportedFavorite { pack_id: pack.into(), pack_key: "kk".into(), sticker_id: id, favorited_at: at };
+    // One we know (a tombstone here) is left as it is; the rest come in as
+    // Storage Service has them.
+    assert_eq!(db.import_favorite_stickers(&[import("aa", 3, 20), import("bb", 1, 30)]).await.unwrap(), 1);
+    let all = db.favorite_stickers().await.unwrap();
+    let bb = all.iter().find(|f| f.pack_id == "bb").unwrap();
+    assert_eq!((bb.favorited_at, bb.needs_sync, bb.pack_key.as_deref()), (Some(30), false, Some("kk")));
+    assert!(!all.iter().find(|f| f.pack_id == "aa").unwrap().is_active());
+    // No more than the limit.
+    let many: Vec<_> = (0..FAVORITE_STICKER_LIMIT as u32 + 5).map(|i| import("cc", i, 1)).collect();
+    assert_eq!(db.import_favorite_stickers(&many).await.unwrap(), FAVORITE_STICKER_LIMIT - 1);
+    assert_eq!(db.favorite_stickers().await.unwrap().iter().filter(|f| f.is_active()).count(), FAVORITE_STICKER_LIMIT);
 }
 
 #[tokio::test]

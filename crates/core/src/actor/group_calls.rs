@@ -35,6 +35,14 @@ pub(super) enum HistorySource {
     OtherDevice,
 }
 
+/// Whether someone's (`by`'s) `groupCallUpdate` may add a call to a
+/// group's history (Desktop's `canCreate` in `handleGroupCallUpdateMessage`,
+/// `ts/messages/handleDataMessage.preload.ts`, commit 749cd4ee3): the group
+/// is accepted and not blocked, and when only admins may send, `by` is one.
+pub(super) fn may_add_group_call(accepted: bool, blocked: bool, admins_only: bool, admins: &[String], by: &str) -> bool {
+    accepted && !blocked && (!admins_only || admins.iter().any(|a| a == by))
+}
+
 /// Whether a group call's status change here is told to our other devices
 /// (Desktop's `statusToProto` and `updateCallHistoryFromLocalEvent`): one
 /// we took part in, each time it changes.
@@ -686,8 +694,9 @@ impl Actor {
         self.enqueue(Outbound::Send { conversation: conversation.clone(), body: data.into(), timestamp, message: None });
     }
 
-    /// Someone's `groupCallUpdate` (or ours, from another device): a call
-    /// in the history if it's new to us. Desktop peeks the call first and
+    /// Someone's `groupCallUpdate`: a call in the history if it's new to us
+    /// (only when [`may_add_group_call`]; ours from another device adds
+    /// none, as Desktop's `canCreate` needs an incoming one). Desktop peeks the call first and
     /// takes who started it from the calling server; we take the sender,
     /// which is who started it unless they joined someone else's.
     pub(super) async fn on_group_call_started(&self, conversation: ConversationId, by: Option<String>, era: Option<String>, at: i64) {
@@ -904,6 +913,19 @@ pub(super) fn method_of(method: langis_calls::HttpMethod) -> reqwest::Method {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn group_call_updates_add_calls_as_desktop_allows() {
+        let add = super::may_add_group_call;
+        let admins = vec!["admin".to_owned()];
+        assert!(add(true, false, false, &admins, "anyone"));
+        // A message request, or a blocked group: nothing.
+        assert!(!add(false, false, false, &admins, "anyone"));
+        assert!(!add(true, true, false, &admins, "anyone"));
+        // Only admins may send: only theirs.
+        assert!(!add(true, false, true, &admins, "anyone"));
+        assert!(add(true, false, true, &admins, "admin"));
+    }
+
     #[test]
     fn calls_we_took_part_in_are_synced_once_per_status() {
         use langis_store::GroupCallStatus as S;

@@ -235,6 +235,9 @@ this revision on 2026-11-05. Changes:
   (`aciBinary`, `nickname` as a `SignalNickname`, `note`), from Signal
   Desktop's `protos/SignalService.proto`, so a shared contact's Signal
   account, nickname and note can be shown.
+- `protobuf/SignalService.proto`: `DataMessage.Quote.groupId` (9), from
+  Signal Desktop's `protos/SignalService.proto` (commit 98032f987), for
+  private replies to group messages. Changed by langis.
 - `protobuf/StorageService.proto`: `InstalledStickerPackRecord` and its
   identifier and record type (6), from Signal Desktop's
   `protos/SignalStorage.proto`, for installed sticker packs.
@@ -258,6 +261,11 @@ this revision on 2026-11-05. Changes:
 - `Cargo.toml`: upstream's dev-dependencies (less `clap`, for the examples
   that aren't vendored) and uuid's `v4` feature, so the crate's tests run
   as a workspace member (`cargo test --workspace`). Changed by langis.
+- `src/websocket/stickers.rs`: a sticker or a sticker pack's manifest
+  over 1 MiB as it comes from the CDN fails with an I/O error instead of
+  being read whole, as Signal Desktop's `maxResponseSize` refuses it
+  (`MAX_STICKER_CIPHERTEXT_BYTE_LENGTH`, Desktop commit 5476a2607).
+  Changed by langis.
 
 ## presage-store-sqlite
 

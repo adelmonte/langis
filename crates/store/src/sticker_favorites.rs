@@ -53,6 +53,18 @@ impl FavoriteSticker {
     }
 }
 
+/// A favorite as a transferred backup has it (`FavoriteStickerList`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedFavorite {
+    /// Hex.
+    pub pack_id: String,
+    /// Hex.
+    pub pack_key: String,
+    pub sticker_id: u32,
+    /// Unix millis.
+    pub favorited_at: i64,
+}
+
 /// A favorite as a Storage Service record has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteFavoriteSticker {
@@ -302,6 +314,39 @@ impl AppDb {
             }) {
                 f.needs_sync = false;
             }
+        })
+        .await
+    }
+
+    /// Favorites from a transferred backup (Desktop's
+    /// `fromFavoriteStickerList`, `ts/services/backups/import.preload.ts`,
+    /// commit e345f3932): each as Storage Service already has it (not to be
+    /// written), skipping one we have in any state, and none past
+    /// [`FAVORITE_STICKER_LIMIT`]. Returns how many were added.
+    pub async fn import_favorite_stickers(&self, imported: &[ImportedFavorite]) -> Result<usize> {
+        self.edit_favorites(|favorites| {
+            let mut added = 0;
+            for import in imported {
+                if favorites.iter().filter(|f| f.is_active()).count() >= FAVORITE_STICKER_LIMIT {
+                    break;
+                }
+                if favorites.iter().any(|f| f.is(&import.pack_id, import.sticker_id)) {
+                    continue;
+                }
+                favorites.push(FavoriteSticker {
+                    pack_id: import.pack_id.clone(),
+                    sticker_id: import.sticker_id,
+                    pack_key: Some(import.pack_key.clone()),
+                    favorited_at: Some(import.favorited_at),
+                    deleted_at: None,
+                    needs_sync: false,
+                    emoji: None,
+                    path: None,
+                });
+                added += 1;
+            }
+            sort(favorites);
+            added
         })
         .await
     }

@@ -127,6 +127,20 @@ impl RemoteConfig {
         self.feature("stickerFavorites")
     }
 
+    /// Hiding received sticker packs in the sticker manager
+    /// (`stickerPackHiding`, Desktop's `isHidingStickerPacksEnabled`,
+    /// commit 8049395d9). Storage Service's hidden packs merge either way.
+    pub fn sticker_pack_hiding(&self) -> bool {
+        self.feature("stickerPackHiding")
+    }
+
+    /// Sending a private reply to a group message (`privateReply.send`,
+    /// Desktop's `isPrivateReplySendEnabled`, commit 98032f987). Receiving
+    /// one needs no flag.
+    pub fn private_reply_send(&self) -> bool {
+        self.feature("privateReply.send")
+    }
+
     /// Setting our own member label in a group (`groupMemberLabels.edit`).
     pub fn group_member_labels_edit(&self) -> bool {
         self.feature("groupMemberLabels.edit")
@@ -422,6 +436,9 @@ mod tests {
         // Internal users get everything.
         assert!(RemoteConfig::from_pairs([("desktop.internalUser", "true")]).group_terminate_send());
         assert!(RemoteConfig::from_pairs([("desktop.shareContact.prod", "8.30.0")]).share_contact());
+        assert!(RemoteConfig::from_pairs([("desktop.stickerPackHiding.prod", "8.30.0")]).sticker_pack_hiding());
+        assert!(RemoteConfig::from_pairs([("desktop.privateReply.send.prod", "8.30.0")]).private_reply_send());
+        assert!(!RemoteConfig::from_pairs([("desktop.privateReply.send.beta", "8.30.0")]).private_reply_send());
         assert!(!RemoteConfig::from_pairs([("desktop.shareContact.beta", "8.30.0")]).share_contact());
     }
 

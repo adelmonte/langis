@@ -183,6 +183,8 @@ pub(crate) async fn seed(db: &AppDb, data_dir: &Path) -> langis_store::Result<()
         thumbnail,
         attachment: message.attachments.first().map(langis_store::QuotedAttachment::of),
         story: false,
+        group: None,
+        group_unknown: false,
     };
     let react = |emoji: &str, from: Option<&str>| Reaction { emoji: emoji.into(), author: from.map(|f| aci(f).into()), sent_at: now };
 
@@ -737,7 +739,14 @@ async fn demo_sticker_manager(db: &AppDb, data_dir: &Path) -> crate::stickers::S
     crate::stickers::StickerManagerView {
         installed: installed.iter().map(|p| demo_summary(p, true)).collect(),
         blessed: Vec::new(),
-        received: demo_all_stickers(data_dir).iter().map(|p| demo_summary(p, ids.contains(&hex::encode(&p.id)))).collect(),
+        received: {
+            let hidden = db.hidden_sticker_pack_ids().await.unwrap_or_default();
+            demo_all_stickers(data_dir)
+                .iter()
+                .filter(|p| !hidden.contains(&hex::encode(&p.id)))
+                .map(|p| demo_summary(p, ids.contains(&hex::encode(&p.id))))
+                .collect()
+        },
     }
 }
 
@@ -1302,6 +1311,8 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                         thumbnail: m.thumbnail(),
                         attachment: m.attachments.first().map(langis_store::QuotedAttachment::of),
                         story: false,
+                        group: None,
+                        group_unknown: false,
                     }),
                     None => None,
                 };
@@ -1925,6 +1936,23 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 let _ = db.set_setting(DEMO_INSTALLED_STICKERS, &serde_json::to_string(&ids).unwrap_or_default()).await;
                 emit(Event::Stickers(demo_stickers_installed(&db, &data_dir).await));
                 emit(Event::StickerManager(demo_sticker_manager(&db, &data_dir).await));
+            }
+            // Nothing leaves the demo.
+            Command::SubmitCallQualitySurvey { .. } => emit(Event::CallQualitySurveySent(Ok(()))),
+            // Hidden here only, as the store keeps it.
+            Command::SetStickerPackHidden { id, key, hidden } => {
+                let hex = hex::encode(&id);
+                if hidden {
+                    let mut ids = demo_installed_ids(&db).await;
+                    ids.retain(|i| *i != hex);
+                    let _ = db.set_setting(DEMO_INSTALLED_STICKERS, &serde_json::to_string(&ids).unwrap_or_default()).await;
+                    let _ = db.hide_sticker_pack(&hex, &hex::encode(&key)).await;
+                } else {
+                    let _ = db.unhide_sticker_pack(&hex, now()).await;
+                }
+                emit(Event::Stickers(demo_stickers_installed(&db, &data_dir).await));
+                emit(Event::StickerManager(demo_sticker_manager(&db, &data_dir).await));
+                emit(Event::StickerPackHidden { id, key, hidden });
             }
             Command::UninstallStickerPack { id, .. } => {
                 let mut ids = demo_installed_ids(&db).await;
@@ -2853,6 +2881,8 @@ async fn demo_quote(db: &AppDb, quote: Option<i64>) -> Option<Quote> {
         thumbnail: m.thumbnail(),
         attachment: m.attachments.first().map(langis_store::QuotedAttachment::of),
         story: false,
+        group: None,
+        group_unknown: false,
     })
 }
 

@@ -1,10 +1,13 @@
 //! Desktop's media auto-download (Data usage, `auto-download-attachment`):
 //! which kinds of attachment download as they arrive. Like Desktop
 //! (`ts/util/queueAttachmentDownloads.preload.ts`), a video (a GIF too) is
-//! a video, an image a photo, a voice message within 100 KiB and a sticker
-//! always download, other audio is audio, the rest documents; and nothing
-//! over the remote config's limit downloads on its own. Sizes are compared
-//! padded and encrypted, as Desktop's `isAttachmentTooLarge` does.
+//! a video, an image a photo, a voice message or a sticker within 100 KiB
+//! always downloads (a bigger one follows the audio or photos choice,
+//! Desktop commit a26894b08), other audio is audio, the rest documents; and
+//! nothing over the remote config's limit downloads on its own. A sticker
+//! over 1 MiB never downloads (`MAX_STICKER_CIPHERTEXT_BYTE_LENGTH`,
+//! Desktop commit 5476a2607). Sizes are compared padded and encrypted, as
+//! Desktop's `isAttachmentTooLarge` does.
 
 use langis_store::AttachmentMeta;
 
@@ -13,6 +16,18 @@ pub const SETTING_AUTO_DOWNLOAD: &str = "auto_download";
 
 /// Desktop's `MAX_VOICE_MESSAGE_AUTO_DOWNLOAD_SIZE`.
 const MAX_VOICE_BYTES: u64 = 100 * 1024;
+/// Desktop's `MAX_STICKER_AUTO_DOWNLOAD_SIZE`.
+const MAX_STICKER_AUTO_BYTES: u64 = 100 * 1024;
+/// The biggest sticker that downloads at all (Desktop's
+/// `MAX_STICKER_CIPHERTEXT_BYTE_LENGTH` in `ts/types/AttachmentSize.std.ts`),
+/// a sticker message's image or one from a pack.
+pub const MAX_STICKER_BYTES: u64 = 1024 * 1024;
+
+/// Whether a sticker message's image is over [`MAX_STICKER_BYTES`]
+/// (Desktop's `runDownloadAttachmentJobInner` refuses it).
+pub fn sticker_too_large(attachment: &AttachmentMeta) -> bool {
+    attachment.sticker && crate::remote_config::too_large(attachment.size, MAX_STICKER_BYTES)
+}
 
 /// Desktop's `AutoDownloadAttachmentType`; all on by default
 /// (`DEFAULT_AUTO_DOWNLOAD_ATTACHMENT`).
@@ -44,12 +59,20 @@ impl AutoDownload {
         value.and_then(|v| serde_json::from_str(v).ok()).unwrap_or_default()
     }
 
-    /// Whether `attachment` downloads as it arrives.
+    /// Whether `attachment` downloads as it arrives (Desktop's
+    /// `queueAttachmentDownloads` and `isAutoDownloadEnabled`).
     pub fn downloads(&self, attachment: &AttachmentMeta) -> bool {
         let kind = attachment.content_type.as_str();
+        if sticker_too_large(attachment) {
+            return false;
+        }
         let small_voice = attachment.voice && !crate::remote_config::too_large(attachment.size, MAX_VOICE_BYTES);
-        let chosen = if attachment.sticker || small_voice {
-            true
+        let small_sticker = attachment.sticker && !crate::remote_config::too_large(attachment.size, MAX_STICKER_AUTO_BYTES);
+        if small_sticker || small_voice {
+            return true;
+        }
+        let chosen = if attachment.sticker {
+            self.photos
         } else if kind.starts_with("video/") || attachment.gif {
             self.videos
         } else if kind.starts_with("image/") {
@@ -118,6 +141,14 @@ mod tests {
         assert!(!none.downloads(&edge_voice));
         let sticker = AttachmentMeta { sticker: true, ..meta("image/webp", 20_000) };
         assert!(none.downloads(&sticker));
+        // A bigger sticker follows photos (Desktop commit a26894b08); one
+        // over 1 MiB never comes (5476a2607).
+        let big_sticker = AttachmentMeta { sticker: true, ..meta("image/webp", 200_000) };
+        assert!(!none.downloads(&big_sticker) && all.downloads(&big_sticker));
+        assert!(!AutoDownload { photos: false, ..all }.downloads(&big_sticker));
+        let huge_sticker = AttachmentMeta { sticker: true, ..meta("image/webp", 1024 * 1024) };
+        assert!(sticker_too_large(&huge_sticker) && !all.downloads(&huge_sticker));
+        assert!(!sticker_too_large(&big_sticker));
         // Over the remote config's limit, nothing downloads on its own.
         assert!(!all.downloads(&meta("image/jpeg", crate::remote_config().auto_download_max_bytes())));
         // Stored choices read back, a missing one on.

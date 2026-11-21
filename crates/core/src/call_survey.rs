@@ -2,9 +2,18 @@
 //! `ts/services/calling.preload.ts`): after a call RingRTC calls a survey
 //! candidate, at most once a day, always (within a day of the last such) for
 //! one that failed, else for a share of calls set by the remote config's
-//! `desktop.callQualitySurveyPPM` (1% without it). Desktop sends the answers
-//! to Signal's gRPC call quality service, which langis can't reach: the
-//! survey is the frontend's alone.
+//! `desktop.callQualitySurveyPPM` (1% without it).
+//!
+//! The answers go with the call's statistics (Desktop's
+//! `submitCallQualitySurvey` in `ts/state/ducks/calling.preload.ts`). Desktop
+//! sends them through libsignal-net's `UnauthCallQualityService` since commit
+//! 97a1b1ef6, a gRPC call; langis's libsignal-net-chat has the same call
+//! (`Unauth::submit_call_quality_survey`) but langis opens no gRPC
+//! connection, so they go as Desktop sent them before that commit: `PUT
+//! /v1/call_quality_survey` on the unauthenticated chat connection, a
+//! `SubmitCallQualitySurveyRequest` protobuf (Desktop's removed
+//! `protos/CallQualitySurvey.proto`). That message has no field for the call
+//! id hash, so it isn't sent.
 
 /// Settings key: when the survey was last offered (unix millis; Desktop's
 /// `lastCallQualitySurveyTime`).
@@ -22,6 +31,9 @@ const COOLDOWN: i64 = 24 * 60 * 60 * 1000;
 /// A call to ask about, as `Event::CallQualitySurvey`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallSurvey {
+    /// RingRTC's statistics and telemetry, sent with the answers.
+    pub stats: langis_calls::CallStats,
+    pub telemetry: Option<Vec<u8>>,
     pub conversation: crate::ConversationId,
     /// Desktop's `CallQualitySurvey.CallType`: `direct_voice`,
     /// `direct_video`, `group` or `call_link`.
@@ -33,6 +45,113 @@ pub struct CallSurvey {
     pub failed: bool,
     /// RingRTC's end reason, as text.
     pub end_reason: String,
+}
+
+/// Desktop's removed `SubmitCallQualitySurveyRequest`
+/// (`protos/CallQualitySurvey.proto` before commit 97a1b1ef6).
+#[derive(Clone, PartialEq, prost::Message)]
+pub(crate) struct SurveyRequest {
+    #[prost(bool, tag = "1")]
+    pub user_satisfied: bool,
+    #[prost(string, repeated, tag = "2")]
+    pub call_quality_issues: Vec<String>,
+    #[prost(string, optional, tag = "3")]
+    pub additional_issues_description: Option<String>,
+    #[prost(string, optional, tag = "4")]
+    pub debug_log_url: Option<String>,
+    #[prost(int64, tag = "5")]
+    pub start_timestamp: i64,
+    #[prost(int64, tag = "6")]
+    pub end_timestamp: i64,
+    #[prost(string, tag = "7")]
+    pub call_type: String,
+    #[prost(bool, tag = "8")]
+    pub success: bool,
+    #[prost(string, tag = "9")]
+    pub call_end_reason: String,
+    #[prost(float, optional, tag = "10")]
+    pub connection_rtt_median: Option<f32>,
+    #[prost(float, optional, tag = "11")]
+    pub audio_rtt_median: Option<f32>,
+    #[prost(float, optional, tag = "12")]
+    pub video_rtt_median: Option<f32>,
+    #[prost(float, optional, tag = "13")]
+    pub audio_recv_jitter_median: Option<f32>,
+    #[prost(float, optional, tag = "14")]
+    pub video_recv_jitter_median: Option<f32>,
+    #[prost(float, optional, tag = "15")]
+    pub audio_send_jitter_median: Option<f32>,
+    #[prost(float, optional, tag = "16")]
+    pub video_send_jitter_median: Option<f32>,
+    #[prost(float, optional, tag = "17")]
+    pub audio_recv_packet_loss_fraction: Option<f32>,
+    #[prost(float, optional, tag = "18")]
+    pub video_recv_packet_loss_fraction: Option<f32>,
+    #[prost(float, optional, tag = "19")]
+    pub audio_send_packet_loss_fraction: Option<f32>,
+    #[prost(float, optional, tag = "20")]
+    pub video_send_packet_loss_fraction: Option<f32>,
+    #[prost(bytes = "vec", optional, tag = "21")]
+    pub call_telemetry: Option<Vec<u8>>,
+}
+
+/// The answers as Desktop sends them: no issues when it went well, the
+/// description only with the `other` issue.
+pub(crate) fn request(
+    survey: &CallSurvey,
+    satisfied: bool,
+    issues: Vec<String>,
+    description: Option<String>,
+    debug_log_url: Option<String>,
+) -> SurveyRequest {
+    let other = issues.iter().any(|i| i == "other");
+    let (audio, video) = (survey.stats.audio, survey.stats.video);
+    SurveyRequest {
+        user_satisfied: satisfied,
+        call_quality_issues: if satisfied { Vec::new() } else { issues },
+        additional_issues_description: description.filter(|_| !satisfied && other),
+        debug_log_url,
+        start_timestamp: survey.started_at,
+        end_timestamp: survey.ended_at,
+        call_type: survey.call_type.to_owned(),
+        success: !survey.failed,
+        call_end_reason: survey.end_reason.clone(),
+        connection_rtt_median: survey.stats.connection_rtt_median,
+        audio_rtt_median: audio.rtt_median,
+        video_rtt_median: video.rtt_median,
+        audio_recv_jitter_median: audio.jitter_median_recv,
+        video_recv_jitter_median: video.jitter_median_recv,
+        audio_send_jitter_median: audio.jitter_median_send,
+        video_send_jitter_median: video.jitter_median_send,
+        audio_recv_packet_loss_fraction: audio.packet_loss_recv,
+        video_recv_packet_loss_fraction: video.packet_loss_recv,
+        audio_send_packet_loss_fraction: audio.packet_loss_send,
+        video_send_packet_loss_fraction: video.packet_loss_send,
+        call_telemetry: survey.telemetry.clone(),
+    }
+}
+
+/// Sends a survey on the unauthenticated chat connection (Desktop's
+/// `submitCallQualitySurvey` in `ts/textsecure/WebAPI.preload.ts` before
+/// commit 97a1b1ef6).
+pub(crate) async fn submit(
+    ws: &mut presage::libsignal_service::websocket::SignalWebSocket<presage::libsignal_service::websocket::Unidentified>,
+    request: &SurveyRequest,
+) -> anyhow::Result<()> {
+    use prost::Message as _;
+    let message = presage::proto::WebSocketRequestMessage {
+        verb: Some("PUT".into()),
+        path: Some("/v1/call_quality_survey".into()),
+        body: Some(request.encode_to_vec()),
+        headers: vec!["content-type:application/octet-stream".into()],
+        id: None,
+    };
+    let response = tokio::time::timeout(std::time::Duration::from_secs(30), ws.request(message))
+        .await
+        .map_err(|_| anyhow::anyhow!("timed out"))??;
+    let status = response.status.unwrap_or_default();
+    anyhow::ensure!((200..300).contains(&status), "the server answered {status}");
+    Ok(())
 }
 
 /// Desktop's `shouldShowCallQualitySurvey`; `roll` is uniform in [0, 1).
@@ -59,7 +178,38 @@ mod tests {
     use super::*;
 
     fn summary(candidate: bool, reason: &str) -> langis_calls::Summary {
-        langis_calls::Summary { survey_candidate: candidate, end_reason: reason.into(), started_at: 0, ended_at: 1 }
+        langis_calls::Summary { survey_candidate: candidate, end_reason: reason.into(), started_at: 0, ended_at: 1, ..Default::default() }
+    }
+
+    #[test]
+    fn requests_carry_the_answers_and_stats_as_desktop_sends_them() {
+        use prost::Message as _;
+        let mut stats = langis_calls::CallStats { connection_rtt_median: Some(12.5), ..Default::default() };
+        stats.audio.packet_loss_recv = Some(0.25);
+        let survey = CallSurvey {
+            stats,
+            telemetry: Some(vec![1, 2]),
+            conversation: crate::ConversationId("d:x".into()),
+            call_type: "group",
+            started_at: 100,
+            ended_at: 200,
+            failed: true,
+            end_reason: "ConnectionFailure".into(),
+        };
+        let unhappy = request(&survey, false, vec!["audio".into(), "other".into()], Some("robot".into()), None);
+        assert_eq!(unhappy.call_quality_issues, ["audio", "other"]);
+        assert_eq!(unhappy.additional_issues_description.as_deref(), Some("robot"));
+        assert!(!unhappy.success);
+        assert_eq!((unhappy.start_timestamp, unhappy.end_timestamp, unhappy.call_type.as_str()), (100, 200, "group"));
+        assert_eq!((unhappy.connection_rtt_median, unhappy.audio_recv_packet_loss_fraction), (Some(12.5), Some(0.25)));
+        assert_eq!(unhappy.call_telemetry.as_deref(), Some(&[1u8, 2][..]));
+        // Round trips through the wire format.
+        assert_eq!(SurveyRequest::decode(unhappy.encode_to_vec().as_slice()).unwrap(), unhappy);
+        // Satisfied: no issues, no description.
+        let happy = request(&survey, true, vec!["audio".into()], Some("x".into()), None);
+        assert!(happy.call_quality_issues.is_empty() && happy.additional_issues_description.is_none());
+        // A description without "other" isn't sent.
+        assert_eq!(request(&survey, false, vec!["video".into()], Some("x".into()), None).additional_issues_description, None);
     }
 
     #[test]

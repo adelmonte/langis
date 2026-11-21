@@ -77,11 +77,20 @@ pub fn duration_label(secs: f64) -> String {
     if minutes == 1 { "1 minute".into() } else { format!("{minutes} minutes") }
 }
 
-/// Whether a video of this type is re-encoded before sending: MP4, Ogg
-/// and WebM, as Desktop (`isVideoTypeSupported`), when ffmpeg is installed.
-pub fn transcodes(content_type: &str) -> bool {
+/// Whether a video of this type can be re-encoded: MP4, QuickTime (.mov),
+/// Ogg and WebM, as Desktop's `isVideoTypeTranscodable`
+/// (`ts/util/GoogleChrome.std.ts`, QuickTime since Desktop commit
+/// f820b4af7; only these formats are read, commit 508d12f69).
+pub fn transcodable(content_type: &str) -> bool {
     let base = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
-    matches!(base.as_str(), "video/mp4" | "video/ogg" | "video/webm") && tools().is_some()
+    matches!(base.as_str(), "video/mp4" | "video/quicktime" | "video/ogg" | "video/webm")
+}
+
+/// Whether a video of this type is re-encoded before sending: one that's
+/// [`transcodable`], when ffmpeg is installed. What comes out is an MP4
+/// (`video/mp4`, as Desktop's `transcodeVideo` sets it).
+pub fn transcodes(content_type: &str) -> bool {
+    transcodable(content_type) && tools().is_some()
 }
 
 /// Where `ffmpeg` and `ffprobe` are, looked up once: both on `PATH`, and
@@ -238,6 +247,16 @@ pub fn transcode(input: &Path, output: &Path, target: &TranscodeTarget) -> anyho
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quicktime_is_transcodable_and_other_videos_are_not() {
+        for kind in ["video/mp4", "video/quicktime", "video/webm", "video/ogg", "VIDEO/QuickTime; codecs=x"] {
+            assert!(transcodable(kind), "{kind}");
+        }
+        for kind in ["video/x-matroska", "video/x-msvideo", "image/gif", "audio/mp4"] {
+            assert!(!transcodable(kind), "{kind}");
+        }
+    }
 
     #[test]
     fn targets_follow_desktops_defaults_by_country() {

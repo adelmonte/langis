@@ -673,6 +673,8 @@ impl Actor {
             let _ = self.db.set_setting(cs::SETTING_LAST_FAILURE_SURVEY, &now.to_string()).await;
         }
         self.emit(Event::CallQualitySurvey(cs::CallSurvey {
+            stats: summary.stats,
+            telemetry: summary.telemetry.clone(),
             conversation,
             call_type,
             started_at: summary.started_at,
@@ -680,6 +682,29 @@ impl Actor {
             failed: summary.failed(),
             end_reason: summary.end_reason.clone(),
         }));
+    }
+
+    /// The survey's answers, sent (`crate::call_survey::submit`); the
+    /// frontend hears how it went.
+    pub(super) async fn submit_call_survey(
+        &self,
+        survey: crate::call_survey::CallSurvey,
+        satisfied: bool,
+        issues: Vec<String>,
+        description: Option<String>,
+        debug_log_url: Option<String>,
+    ) {
+        let request = crate::call_survey::request(&survey, satisfied, issues, description, debug_log_url);
+        let result = async {
+            let manager = self.manager().context("not linked")?;
+            let mut ws = manager.unauthenticated_websocket().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            crate::call_survey::submit(&mut ws, &request).await
+        }
+        .await;
+        if let Err(error) = &result {
+            warn!(error = %format!("{error:#}"), "couldn't submit the call quality survey");
+        }
+        self.emit(Event::CallQualitySurveySent(result.map_err(|e| format!("{e:#}"))));
     }
 
     /// A call we didn't ring for: missed, in the chat and the call history.
