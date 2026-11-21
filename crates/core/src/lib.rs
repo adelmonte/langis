@@ -1483,6 +1483,11 @@ pub enum Event {
     /// Signal's gRPC call quality service, which langis can't reach.
     CallQualitySurvey(call_survey::CallSurvey),
     Error(String),
+    /// This device is no longer linked. After `Command::Unlink` the local
+    /// account and history are gone. When the phone removed the device
+    /// (the server refuses our credentials), only the registration and
+    /// protocol state go, as Desktop's `unlinkAndDisconnect`: linking the
+    /// same account again keeps the chats. `NeedsLinking` follows.
     Unlinked,
 }
 

@@ -91,7 +91,12 @@ newer client).
 
 Whose data is here is told by Note to Self's id in the app database. A
 link to the same account, or to a data directory with no account yet, goes
-straight on. `LinkedOtherAccount` can also come at a start, when the app
+straight on. Linking the same account again keeps its chats, messages,
+media and settings, as Desktop's `createAccount` does
+(`removeAllConfiguration`): only the registration and protocol state
+(sessions, pre-keys, sender keys, group send endorsements) start over, and
+no history is transferred, since it isn't a clean start. A data directory
+with no account yet starts from an empty app database. `LinkedOtherAccount` can also come at a start, when the app
 closed while the question was open: nothing of the new account runs, and
 nothing is deleted, until the answer. Linking again with `Command::Link`
 also drops the waiting link. Unlike Desktop, which asks before it
@@ -103,8 +108,12 @@ recent history: `Event::History(progress)` reports how far along it is.
 `Command::SkipHistory` skips it.
 
 `Event::Unlinked` means this device is no longer linked: the phone removed
-it, or you sent `Command::Unlink`. The backend has already wiped the local
-account and history; show the link screen again.
+it, or you sent `Command::Unlink`. After `Command::Unlink` the backend has
+already wiped the local account and history. When the phone removed it,
+the chats stay (Desktop's `unlinkAndDisconnect` erases only the
+configuration), and linking the same account again picks them up; linking
+another account asks with `LinkedOtherAccount`. Show the link screen again
+(`NeedsLinking` follows).
 
 ## 4. Connection state
 

@@ -813,6 +813,21 @@ impl Actor {
     }
 
     async fn start_session(self: &Rc<Self>, manager: SignalManager, just_linked: bool) {
+        self.start_session_with(manager, just_linked, just_linked).await;
+    }
+
+    /// [`Self::start_session`] right after linking: the history transfer
+    /// only for a `clean_start` (Desktop downloads the link-and-sync backup
+    /// only then, `createAccount`'s `isCleanStart`).
+    async fn start_session_linked(self: &Rc<Self>, manager: SignalManager, clean_start: bool) {
+        if !clean_start {
+            // One left from before isn't resumed either.
+            let _ = self.db.remove_setting(SETTING_HISTORY_PENDING).await;
+        }
+        self.start_session_with(manager, true, clean_start).await;
+    }
+
+    async fn start_session_with(self: &Rc<Self>, manager: SignalManager, just_linked: bool, clean_start: bool) {
         let data = manager.registration_data();
         let aci = data.service_ids.aci().service_id_string();
         let phone = Some(data.phone_number.to_string());
@@ -856,7 +871,7 @@ impl Actor {
                     this.error("failed to request contacts", error);
                 }
             });
-            if manager.registration_data().ephemeral_backup_key().is_some() {
+            if clean_start && manager.registration_data().ephemeral_backup_key().is_some() {
                 let _ = self.db.set_setting(SETTING_HISTORY_PENDING, "1").await;
             }
             // Desktop takes the phone's read receipts setting when linked;
@@ -1332,15 +1347,53 @@ impl Actor {
 
     async fn finish_link(self: &Rc<Self>, manager: SignalManager) {
         self.emit(Event::Linked);
-        // A fresh link starts from a clean slate.
+        let aci = manager.registration_data().service_ids.aci().service_id_string();
+        let previous = self.db.account_aci().await.ok().flatten();
+        let clean_start = match crate::linking::relink(previous.as_deref(), &aci) {
+            // Desktop's `createAccount` for the same account erases only
+            // the configuration (`removeAllConfiguration`): chats,
+            // messages and settings stay, and no history is transferred,
+            // as it isn't a clean start (`isCleanStart`).
+            crate::linking::Relink::SameAccount => {
+                info!("linked to the same account again; keeping its data");
+                self.clear_configuration().await;
+                false
+            }
+            // A fresh link starts from a clean slate. (Another account's
+            // data went with "Delete all data?" before this.)
+            crate::linking::Relink::Fresh | crate::linking::Relink::OtherAccount => {
+                if let Err(error) = self.db.clear().await {
+                    self.error("failed to reset app database", error);
+                }
+                true
+            }
+        };
         self.identities_seen.borrow_mut().clear();
-        if let Err(error) = self.db.clear().await {
-            self.error("failed to reset app database", error);
-        }
         self.titled.borrow_mut().clear();
         self.names.borrow_mut().clear();
-        self.start_session(manager, true).await;
+        self.start_session_linked(manager, clean_start).await;
         self.emit(Event::ConversationsChanged);
+    }
+
+    /// Desktop's `removeAllConfiguration`, for the phone unlinking us and
+    /// for linking the same account again, as kept in the app database:
+    /// our sender key states and the groups' send endorsements go, and so
+    /// do waiting downloads. Chats, messages, contacts, groups, media and
+    /// settings stay. The Storage Service manifest version stays too: it's
+    /// the same account, whose versions only go up. Presage's registration
+    /// and protocol state (sessions, identities, pre-keys, sender keys) are
+    /// cleared by the caller on an unlink, and by presage when a link
+    /// starts.
+    async fn clear_configuration(&self) {
+        self.drop_waiting_downloads();
+        for prefix in [crate::sender_keys::SENDER_KEY_PREFIX, crate::sender_keys::ENDORSEMENTS_PREFIX] {
+            if let Err(error) = self.db.remove_settings_with_prefix(prefix).await {
+                warn!(%error, prefix, "failed to clear sender key state");
+            }
+        }
+        self.identities_seen.borrow_mut().clear();
+        self.storage_synced.replace(false);
+        self.remote_config_at.set(None);
     }
 
     /// Whether `manager` is another account than the one whose data is
@@ -1349,7 +1402,7 @@ impl Actor {
     async fn other_account(&self, manager: &SignalManager) -> bool {
         let aci = manager.registration_data().service_ids.aci().service_id_string();
         match self.db.account_aci().await {
-            Ok(previous) => previous.is_some_and(|p| p != aci),
+            Ok(previous) => crate::linking::relink(previous.as_deref(), &aci) == crate::linking::Relink::OtherAccount,
             // Unknown: ask rather than risk mixing two accounts.
             Err(error) => {
                 warn!(%error, "couldn't read whose data this is");
@@ -1506,7 +1559,14 @@ impl Actor {
                 Err(presage::Error::ServiceError(ServiceError::Unauthorized)) => {
                     warn!("server rejected our credentials; device was unlinked");
                     self.manager.borrow_mut().take();
-                    self.wipe().await;
+                    // Desktop's `unlinkAndDisconnect`: only the
+                    // configuration goes (`removeAllConfiguration`), and
+                    // linking the same account again finds the chats.
+                    let mut store = self.store.clone();
+                    if let Err(error) = store.clear_registration().await {
+                        warn!(%error, "failed to clear presage registration");
+                    }
+                    self.clear_configuration().await;
                     self.emit(Event::Connection(ConnectionState::Offline));
                     self.emit(Event::Unlinked);
                     self.emit(Event::NeedsLinking);

@@ -60,9 +60,37 @@ pub(crate) fn classify<S: std::error::Error>(error: &presage::Error<S>, had_url:
     }
 }
 
+/// What a new link means for the data here, by whose it is (Note to
+/// Self's service id in the app database) and the linked account's ACI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Relink {
+    /// No account's data here: a clean start (Desktop's `isCleanStart`).
+    Fresh,
+    /// The same account again (`isRelinkingToSameAccount`): Desktop keeps
+    /// the data and erases only the configuration.
+    SameAccount,
+    /// Another account: Desktop asks before deleting all data.
+    OtherAccount,
+}
+
+pub(crate) fn relink(previous: Option<&str>, new_aci: &str) -> Relink {
+    match previous {
+        None => Relink::Fresh,
+        Some(previous) if previous == new_aci => Relink::SameAccount,
+        Some(_) => Relink::OtherAccount,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_relink_keeps_the_data_only_for_the_same_account() {
+        assert_eq!(relink(None, "a"), Relink::Fresh);
+        assert_eq!(relink(Some("a"), "a"), Relink::SameAccount);
+        assert_eq!(relink(Some("a"), "b"), Relink::OtherAccount);
+    }
 
     type E = presage::Error<std::io::Error>;
 
