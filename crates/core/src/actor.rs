@@ -6069,6 +6069,12 @@ impl Actor {
     async fn fetch_attachment(self: Rc<Self>, message_id: i64, index: usize) {
         let Some(manager) = self.manager() else { return };
         let Some(message) = self.db.message(message_id).await.ok().flatten() else { return };
+        // A sticker over 1 MiB isn't fetched, even by hand (Desktop's
+        // `runDownloadAttachmentJobInner`, commit 5476a2607).
+        if message.attachments.get(index).is_some_and(crate::auto_download::sticker_too_large) {
+            self.emit(Event::AttachmentUnavailable { message_id, index, permanent: true });
+            return self.error("couldn't download the sticker", "it's over 1 MiB");
+        }
         // From transferred history: no stored message, but its locator.
         if let Some(meta) = message.attachments.get(index).filter(|a| a.remote.is_some()) {
             if let Err(error) = self.download_remote(&manager, &message.conversation_id, message_id, index, meta).await {

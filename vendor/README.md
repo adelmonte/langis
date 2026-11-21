@@ -248,6 +248,11 @@ this revision on 2026-11-05. Changes:
 - `Cargo.toml`: upstream's dev-dependencies (less `clap`, for the examples
   that aren't vendored) and uuid's `v4` feature, so the crate's tests run
   as a workspace member (`cargo test --workspace`). Changed by langis.
+- `src/websocket/stickers.rs`: a sticker or a sticker pack's manifest
+  over 1 MiB as it comes from the CDN fails with an I/O error instead of
+  being read whole, as Signal Desktop's `maxResponseSize` refuses it
+  (`MAX_STICKER_CIPHERTEXT_BYTE_LENGTH`, Desktop commit 5476a2607).
+  Changed by langis.
 
 ## presage-store-sqlite
 

@@ -331,8 +331,9 @@ A message's `attachments` list each file's type, size and dimensions.
 then a photo or video's `blurhash`, when the sender gave one, can be drawn
 blurred in its place. By default
 everything downloads on its own; `Command::SetAutoDownload` turns that off
-per kind (photos, videos, audio, documents), and stickers and short voice
-messages always come. Anything not downloaded waits for
+per kind (photos, videos, audio, documents), and stickers and voice
+messages within 100 KiB always come (bigger ones follow photos and audio);
+a sticker over 1 MiB never downloads. Anything not downloaded waits for
 `Command::FetchAttachment { message_id, index }`. `MessageChanged` follows
 when the file is ready.
 A link preview's image downloads as photos do; when that setting leaves it,
