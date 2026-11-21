@@ -119,10 +119,45 @@ impl std::fmt::Display for Gone {
 
 impl std::error::Error for Gone {}
 
+/// A download stopped because the frontend cancelled it
+/// (`Command::CancelDownload`).
+#[derive(Debug)]
+pub(crate) struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the download was cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// Reads a response's body a chunk at a time, telling `progress` the bytes
+/// received after each (it answers `false` to stop, with [`Cancelled`]),
+/// and failing once it's over `limit` (`u64::MAX`: no limit).
+pub(crate) async fn read_body(
+    mut response: reqwest::Response,
+    limit: u64,
+    progress: &mut dyn FnMut(u64) -> bool,
+) -> anyhow::Result<Vec<u8>> {
+    let mut data = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        data.extend_from_slice(&chunk);
+        if data.len() as u64 > limit {
+            bail!("the download is bigger than it should be");
+        }
+        if !progress(data.len() as u64) {
+            return Err(Cancelled.into());
+        }
+    }
+    Ok(data)
+}
+
 pub(crate) async fn download_attachment(
     manager: &crate::actor::SignalManager,
     remote: &RemoteAttachment,
     size: u64,
+    progress: &mut dyn FnMut(u64) -> bool,
 ) -> anyhow::Result<Vec<u8>> {
     use presage::libsignal_service::configuration::Endpoint;
     use presage::libsignal_service::push_service::HttpAuthOverride;
@@ -138,7 +173,7 @@ pub(crate) async fn download_attachment(
     if status == reqwest::StatusCode::NOT_FOUND || (status == reqwest::StatusCode::FORBIDDEN && remote.cdn == 0) {
         return Err(Gone.into());
     }
-    let mut data = response.error_for_status()?.bytes().await?.to_vec();
+    let mut data = read_body(response.error_for_status()?, u64::MAX, progress).await?;
     if let Some(digest) = &remote.digest
         && sha2::Sha256::digest(&data).as_slice() != hex::decode(digest)?.as_slice()
     {
