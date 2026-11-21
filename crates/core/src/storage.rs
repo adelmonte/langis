@@ -11,6 +11,7 @@
 //! another device wrote first.
 
 mod wire;
+pub(crate) mod notification_profiles;
 
 use aes_gcm::{Aes256Gcm, KeyInit as _, aead::Aead as _};
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -107,6 +108,8 @@ pub(crate) struct StorageSnapshot {
     pub sticker_packs: Vec<StorageStickerPack>,
     /// Favorite stickers, and their tombstones.
     pub favorite_stickers: Vec<langis_store::RemoteFavoriteSticker>,
+    /// Notification profiles and the manual override.
+    pub notification_profiles: notification_profiles::RemoteProfiles,
 }
 
 /// An `InstalledStickerPackRecord` (Desktop's `mergeInstalledStickerPackRecord`).
@@ -260,6 +263,7 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                     | IdentifierType::ChatFolder
                     | IdentifierType::StickerPack
                     | IdentifierType::FavoriteStickerPack
+                    | IdentifierType::NotificationProfile
             )
         })
         .map(|id| id.raw.clone())
@@ -303,6 +307,8 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                     // Desktop's `saveBackupTier(toNumber(backupTier))`:
                     // unset means backups are off.
                     snapshot.backup_tier = Some(account.backup_tier.unwrap_or(0));
+                    snapshot.notification_profiles.override_ =
+                        Some(notification_profiles::manual_override(account.notification_profile_manual_override.as_ref()));
                     snapshot.story_view_receipts = match account.story_view_receipts_enabled() {
                         presage::proto::OptionalBool::Enabled => Some(true),
                         presage::proto::OptionalBool::Disabled => Some(false),
@@ -312,6 +318,9 @@ pub(crate) async fn fetch(manager: &SignalManager) -> anyhow::Result<StorageSnap
                 Some(Record::StoryDistributionList(list)) => snapshot.story_lists.extend(story_list(&list)),
                 Some(Record::CallLink(link)) => snapshot.call_links.extend(call_link(&link)),
                 Some(Record::ChatFolder(folder)) => snapshot.chat_folders.extend(chat_folder(&folder)),
+                Some(Record::NotificationProfile(profile)) => {
+                    snapshot.notification_profiles.profiles.extend(notification_profiles::profile(&profile))
+                }
                 Some(Record::InstalledStickerPack(pack)) => snapshot.sticker_packs.extend(sticker_pack(&pack)),
                 Some(Record::Sticker(favorite)) => match favorite_sticker(&favorite) {
                     Some(favorite) => snapshot.favorite_stickers.push(favorite),

@@ -1186,6 +1186,7 @@ async fn drop_later_migrations(db: &AppDb) {
     for column in ["dont_notify_mentions", "blocked_at"] {
         sqlx::query(AssertSqlSafe(format!("ALTER TABLE conversations DROP COLUMN {column}"))).execute(&db.writer).await.unwrap();
     }
+    sqlx::query("DROP TABLE notification_profiles").execute(&db.writer).await.unwrap();
 }
 
 /// Rewrites the migration history to look like a pre-squash database that

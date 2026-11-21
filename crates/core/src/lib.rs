@@ -320,6 +320,12 @@ pub fn photo_placeholder_hash(chat: &langis_store::ConversationId) -> u8 {
     }
 }
 
+/// A new notification profile's id: 16 random bytes as lowercase hex
+/// (Desktop's `generateNotificationProfileId`).
+pub fn new_notification_profile_id() -> String {
+    hex::encode(rand::random::<[u8; langis_store::NOTIFICATION_PROFILE_ID_LENGTH]>())
+}
+
 /// Whether key transparency is on at all (Desktop's remote config flag
 /// `desktop.keyTransparency.prod`).
 pub fn key_transparency_on(config: &RemoteConfig) -> bool {
@@ -850,6 +856,13 @@ pub enum Command {
     /// Desktop keeps them. Answered with `Event::ChatColorsChanged` when
     /// something changed; read them with `AppDb::chat_colors`.
     EditChatColors(langis_store::ChatColorEdit),
+    /// Changes the notification profiles or turns one on or off by hand
+    /// (Desktop's Settings > Notifications > Notification profiles, and
+    /// its chat list menu), here and for the whole account (each profile's
+    /// `NotificationProfile` record, the override in the account record).
+    /// New profiles take an id from `new_notification_profile_id`.
+    /// Answered with `Event::NotificationProfilesChanged`.
+    EditNotificationProfiles(langis_store::NotificationProfileEdit),
 }
 
 /// A per-chat setting kept in the Storage Service.
@@ -1423,6 +1436,9 @@ pub enum Event {
     ChatFoldersChanged,
     /// The chat colors changed: read them again.
     ChatColorsChanged,
+    /// The notification profiles or the override changed, here or on
+    /// another device: read `AppDb::notification_profile_state` again.
+    NotificationProfilesChanged,
     Error(String),
     Unlinked,
 }
