@@ -57,6 +57,35 @@ async fn demo_backup_passes_libsignals_validator() {
     let frames = frames(&db, &keys, &[7; 32], now).await.unwrap();
     assert!(frames.stats.messages > 20, "{:?}", frames.stats);
     assert!(frames.stats.files > 0, "the demo's drawn photos are backed up: {:?}", frames.stats);
+    // The demo's shared contact goes as a ContactMessage.
+    let mut rest = &frames.plain[..];
+    let mut contacts = 0;
+    let mut first = true;
+    while !rest.is_empty() {
+        let (mut len, mut shift, mut used) = (0usize, 0, 0);
+        loop {
+            let byte = rest[used];
+            used += 1;
+            len |= usize::from(byte & 0x7f) << shift;
+            shift += 7;
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        let body = &rest[used..used + len];
+        if !first {
+            use protobuf::Message as _;
+            let frame = proto::Frame::parse_from_bytes(body).unwrap();
+            if let Some(proto::frame::Item::ChatItem(item)) = frame.item
+                && matches!(item.item, Some(proto::chat_item::Item::ContactMessage(_)))
+            {
+                contacts += 1;
+            }
+        }
+        first = false;
+        rest = &rest[used + len..];
+    }
+    assert!(contacts > 0, "shared contacts are exported");
     let encrypted = encrypt(&frames.plain, &keys).unwrap();
     validate(&encrypted, &keys).unwrap();
     // The wrong key doesn't read it.

@@ -1036,8 +1036,73 @@ async fn item_body(
         // Desktop's local backups never carry a view-once message's file.
         return Some(Item::ViewOnceMessage(proto::ViewOnceMessage { reactions, ..Default::default() }));
     }
+    // Desktop's `toContactMessage`: the shared contact, its photo by its
+    // locator as other files.
+    if let Some(langis_store::MessageContent::Contact(c)) = &message.content {
+        use proto::contact_attachment as ca;
+        use langis_store::{AddressKind, ContactMethodKind};
+        let method = |k: ContactMethodKind| match k {
+            ContactMethodKind::Home => 1,
+            ContactMethodKind::Mobile => 2,
+            ContactMethodKind::Work => 3,
+            ContactMethodKind::Custom => 4,
+        };
+        let mut contact = proto::ContactAttachment::new();
+        contact.name = Some(ca::Name {
+            givenName: c.given_name.clone(),
+            familyName: c.family_name.clone(),
+            prefix: c.prefix.clone(),
+            suffix: c.suffix.clone(),
+            middleName: c.middle_name.clone(),
+            nickname: c.nickname.clone(),
+            ..Default::default()
+        })
+        .into();
+        contact.number = c
+            .numbers
+            .iter()
+            .map(|n| ca::Phone { value: n.value.clone(), type_: protobuf::EnumOrUnknown::from_i32(method(n.kind)), label: n.label.clone().unwrap_or_default(), ..Default::default() })
+            .collect();
+        contact.email = c
+            .emails
+            .iter()
+            .map(|e| ca::Email { value: e.value.clone(), type_: protobuf::EnumOrUnknown::from_i32(method(e.kind)), label: e.label.clone().unwrap_or_default(), ..Default::default() })
+            .collect();
+        contact.address = c
+            .addresses
+            .iter()
+            .map(|a| ca::PostalAddress {
+                type_: protobuf::EnumOrUnknown::from_i32(match a.kind {
+                    AddressKind::Home => 1,
+                    AddressKind::Work => 2,
+                    AddressKind::Custom => 3,
+                }),
+                label: a.label.clone().unwrap_or_default(),
+                street: a.street.clone().unwrap_or_default(),
+                pobox: a.pobox.clone().unwrap_or_default(),
+                neighborhood: a.neighborhood.clone().unwrap_or_default(),
+                city: a.city.clone().unwrap_or_default(),
+                region: a.region.clone().unwrap_or_default(),
+                postcode: a.postcode.clone().unwrap_or_default(),
+                country: a.country.clone().unwrap_or_default(),
+                ..Default::default()
+            })
+            .collect();
+        contact.organization = c.organization.clone().unwrap_or_default();
+        if let Some(aci) = c.aci.as_deref().and_then(Aci::parse_from_service_id_string) {
+            contact.aci = aci.service_id_binary();
+        }
+        if !(c.signal_nickname_given.is_empty() && c.signal_nickname_family.is_empty()) {
+            contact.nickname = Some(ca::SignalNickname { given: c.signal_nickname_given.clone(), family: c.signal_nickname_family.clone(), ..Default::default() }).into();
+        }
+        contact.note = c.note.clone().unwrap_or_default();
+        if let Some(avatar) = &c.avatar {
+            contact.avatar = file_pointer(ctx, avatar).await.into();
+        }
+        return Some(Item::ContactMessage(proto::ContactMessage { contact: Some(contact).into(), reactions, ..Default::default() }));
+    }
     if message.content.is_some() {
-        stats.skip("shared contact, payment or gift badge");
+        stats.skip("payment or gift badge");
         return None;
     }
     if let Some(poll) = &message.poll {
