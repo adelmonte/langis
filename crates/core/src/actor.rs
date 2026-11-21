@@ -1963,9 +1963,20 @@ impl Actor {
             Action::CallLinkUpdate { root_key, admin_key } => self.on_call_link_update(root_key, admin_key).await,
             Action::AdhocCallEvent(event) => self.on_adhoc_call_event(event).await,
             Action::GroupCallStarted { conversation, by, era, at } => {
-                // (Not from a blocked group.)
-                if by.is_none() || !self.is_blocked(&conversation).await {
-                    self.on_group_call_started(conversation, by, era, at).await
+                // Desktop's `handleGroupCallUpdateMessage`
+                // (`ts/messages/handleDataMessage.preload.ts`, commit
+                // 749cd4ee3): an ended group's is dropped, and a call is
+                // only added to the history from someone else's update, in
+                // a group we accepted (not blocked), and in an
+                // announcement-only group from an admin.
+                let chat = self.db.conversation(&conversation).await.ok().flatten();
+                if !chat.as_ref().is_some_and(|c| c.ended) {
+                    let may_add = by.as_deref().is_some_and(|by| chat.as_ref().is_none_or(|c| {
+                        group_calls::may_add_group_call(c.accepted, c.blocked, c.group_state.announcements_only, &c.admins, by)
+                    }));
+                    if may_add {
+                        self.on_group_call_started(conversation, by, era, at).await
+                    }
                 }
             }
             Action::Notice { conversation, at, notice } => {
