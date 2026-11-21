@@ -748,8 +748,9 @@ pub enum Command {
     OpenCallLink { url: String },
     /// Lets someone waiting into our call link's call (their ACI), or not.
     ApproveCallJoin { aci: String, approve: bool },
-    /// Takes someone out of our call link's call.
-    RemoveFromCall { demux_id: u32 },
+    /// Takes someone out of our call link's call; `block` keeps them out
+    /// of it (RingRTC's `block_client`, Desktop's "Block from call").
+    RemoveFromCall { demux_id: u32, block: bool },
     /// Lists what can be presented; answered with `Event::ShareSources`.
     /// On Linux that's one source (`langis_calls::PORTAL_SOURCE`) when the
     /// desktop has a ScreenCast portal, and none otherwise.

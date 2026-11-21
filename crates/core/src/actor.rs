@@ -1220,7 +1220,7 @@ impl Actor {
                 Command::DeleteCallLink { room_id } => self.delete_call_link(room_id).await,
                 Command::OpenCallLink { url } => self.open_call_link(url).await,
                 Command::ApproveCallJoin { aci, approve } => self.approve_call_join(aci, approve),
-                Command::RemoveFromCall { demux_id } => self.remove_from_call(demux_id),
+                Command::RemoveFromCall { demux_id, block } => self.remove_from_call(demux_id, block),
                 Command::Unlink => self.unlink().await,
                 // (Taken by `run` before it gets here.)
                 Command::Stop => {}

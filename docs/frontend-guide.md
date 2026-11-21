@@ -250,6 +250,8 @@ meanwhile. Without ffmpeg the original goes.
 | `Command::LoadCallDevices`, `SetCallDevice`, `SetShareQuality` | `Event::CallDevices` |
 | `Command::PeekGroupCall { conversation }` (the lobby) | `Event::GroupPeek { users, max_devices }`: who's in it; with `users.len()` at `max_devices` the call is full |
 | `Command::SetOutgoingRing(on)` (the lobby's Ring toggle) | A group call we start then rings the group (16 or fewer) or only notifies it |
+| `Command::PeekGroupCall` with a call link's `ConversationId` | `Event::GroupPeek` for the link's call: who's in it now, e.g. for the link's details |
+| `Command::RemoveFromCall { demux_id, block }` (a call link we administer) | They leave the call's `participants`; with `block` they can't come back to this call |
 
 An incoming call arrives as `Event::Call(Some(update))` with
 `update.incoming` set: ring.

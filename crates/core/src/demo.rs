@@ -1206,7 +1206,7 @@ pub(crate) async fn run(db: AppDb, data_dir: PathBuf, mut commands: mpsc::Unboun
                 }
                 emit(Event::Call(Some(update.clone())));
             }
-            Command::RemoveFromCall { demux_id } => {
+            Command::RemoveFromCall { demux_id, .. } => {
                 let mut current = call.borrow_mut();
                 let Some((update, _, _)) = current.as_mut() else { continue };
                 update.participants.retain(|p| p.demux_id != demux_id);

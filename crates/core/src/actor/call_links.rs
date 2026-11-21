@@ -445,10 +445,11 @@ impl Actor {
         self.with_calls(|calls| if approve { calls.approve_user(client_id, user) } else { calls.deny_user(client_id, user) });
     }
 
-    /// Takes someone out of our link's call.
-    pub(super) fn remove_from_call(&self, demux_id: u32) {
+    /// Takes someone out of our link's call, and with `block` keeps them
+    /// out (Desktop's `removeClient` and `blockClient`).
+    pub(super) fn remove_from_call(&self, demux_id: u32, block: bool) {
         let Some(client_id) = self.link_client_id() else { return };
-        self.with_calls(|calls| calls.remove_client(client_id, demux_id));
+        self.with_calls(|calls| if block { calls.block_client(client_id, demux_id) } else { calls.remove_client(client_id, demux_id) });
     }
 
     /// Desktop's `sendCallLinkUpdateSync`.
