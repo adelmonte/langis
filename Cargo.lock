@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "langis-calls"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2885,7 +2885,7 @@ dependencies = [
 
 [[package]]
 name = "langis-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes 0.9.4",
  "aes-gcm",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "langis-emoji"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "criterion",
  "fst",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "langis-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "libsqlite3-sys",

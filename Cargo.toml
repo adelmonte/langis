@@ -4,7 +4,7 @@ members = ["crates/*", "vendor/libsignal-service", "vendor/presage-store-sqlite"
 default-members = ["crates/core"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # sqlx 0.9 needs 1.94.
 rust-version = "1.94"
