@@ -4869,12 +4869,19 @@ impl Actor {
         let meta_type =
             if file.voice { VOICE_CONTENT_TYPE.to_owned() } else { media::content_type_for_file(&name).to_owned() };
         let wire_name = (!file.voice).then(|| name.clone());
+        // A video's shown size, so it's drawn its own shape.
+        let shown = if meta_type.starts_with("video/") {
+            let source = path.clone();
+            tokio::task::spawn_blocking(move || crate::video::probe(&source)).await.ok().flatten().map(|v| (v.display_width, v.display_height))
+        } else {
+            None
+        };
         let meta = AttachmentMeta {
             content_type: meta_type.clone(),
             file_name: wire_name.clone(),
             size: file.bytes.len() as u64,
-            width: None,
-            height: None,
+            width: shown.map(|s| s.0),
+            height: shown.map(|s| s.1),
             local_path: Some(path.to_string_lossy().into_owned()),
             sticker: false,
             gif: false,
