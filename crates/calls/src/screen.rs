@@ -2,9 +2,8 @@
 //! of the camera.
 //!
 //! On Linux this goes through the XDG desktop portal's ScreenCast
-//! interface, which works on Wayland and X11 alike: the desktop shows its
-//! own picker (so there's one source to list, [`PORTAL_SOURCE`]), then
-//! hands over a PipeWire stream of what the user picked. Each frame is
+//! interface: the desktop shows its own picker (so there's one source to
+//! list, [`PORTAL_SOURCE`]), then hands over a PipeWire stream of what the user picked. Each frame is
 //! turned into RGBA, scaled to the chosen [`ShareQuality`], and pushed to
 //! RingRTC's video source and the self-view.
 //!
